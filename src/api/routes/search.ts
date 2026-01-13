@@ -10,7 +10,7 @@ const router = Router();
 // Search request schema
 const searchRequestSchema = z.object({
   keywords: z.array(z.string()).optional(),
-  maxResults: z.number().int().positive().max(500).optional(),
+  maxPages: z.number().int().positive().max(20).optional(),
 });
 
 /**
@@ -25,16 +25,16 @@ router.post('/run', async (req: Request, res: Response) => {
       ...config.searchKeywords.primary,
       ...config.searchKeywords.secondary,
     ];
-    const maxResults = body.maxResults || config.search.maxResultsPerSearch;
+    const maxPages = body.maxPages || config.search.maxPages;
 
-    const jobId = await triggerSearch(keywords, maxResults);
+    const jobId = await triggerSearch(keywords, maxPages);
 
     res.json({
       success: true,
       jobId,
       message: 'Search job queued',
       keywords,
-      maxResults,
+      maxPages,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

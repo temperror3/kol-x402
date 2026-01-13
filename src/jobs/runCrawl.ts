@@ -1,65 +1,50 @@
 /**
- * Manual crawl script
+ * Manual crawl script using RapidAPI Twitter Search
  *
  * Run with: npm run crawl
  *
  * This script performs a full discovery and analysis cycle:
- * 1. Search for x402 content on Twitter
+ * 1. Search for x402 content on Twitter via RapidAPI
  * 2. Discover and save users
- * 3. Fetch their recent tweets
+ * 3. Save their tweets
  * 4. Calculate scores
  * 5. Assign categories
  */
 
 import { config, validateConfig } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { searchForX402Content, processDiscoveredUsers } from '../collectors/searchCollector.js';
-import { fetchUserTweets } from '../collectors/userCollector.js';
+import { runFullDiscovery } from '../collectors/searchCollector.js';
 import { calculateAllScores } from '../scorers/scoreCalculator.js';
 import { assignCategory } from '../categorizer/categoryAssigner.js';
 import { AccountModel } from '../db/account.model.js';
 
 async function runCrawl(): Promise<void> {
-  logger.info('Starting x402 KOL discovery crawl...');
+  logger.info('='.repeat(50));
+  logger.info('Starting x402 KOL Discovery Crawl (RapidAPI)');
+  logger.info('='.repeat(50));
 
   try {
     // Validate config
     validateConfig();
     logger.info('Configuration validated');
+    logger.info(`Max pages per keyword: ${config.search.maxPages}`);
+    logger.info(`Delay between requests: ${config.search.delayMs}ms`);
 
-    // Step 1: Search for x402 content
-    logger.info('Step 1: Searching for x402 content...');
+    // Step 1 & 2 & 3: Search, save users, save tweets
+    logger.info('\nStep 1-3: Searching and saving data...');
     const keywords = [...config.searchKeywords.primary, ...config.searchKeywords.secondary];
-    const searchResult = await searchForX402Content(keywords, config.search.maxResultsPerSearch);
-    logger.info(`Found ${searchResult.totalFound} tweets from ${searchResult.users.size} unique users`);
+    logger.info(`Keywords: ${keywords.join(', ')}`);
 
-    // Step 2: Process and save discovered users
-    logger.info('Step 2: Processing discovered users...');
-    const { created, updated } = await processDiscoveredUsers(searchResult.users);
-    logger.info(`Saved users: ${created} new, ${updated} existing`);
+    const discoveryResult = await runFullDiscovery(keywords, config.search.maxPages);
 
-    // Step 3: Enrich accounts with tweet data
-    logger.info('Step 3: Fetching tweet data for analysis...');
-    let enrichedCount = 0;
-    for (const user of searchResult.users.values()) {
-      const account = await AccountModel.getByTwitterId(user.id);
-      if (account && account.id) {
-        await fetchUserTweets(user.id, account.id, 100);
-        enrichedCount++;
-
-        // Progress logging
-        if (enrichedCount % 10 === 0) {
-          logger.info(`Enriched ${enrichedCount}/${searchResult.users.size} accounts`);
-        }
-
-        // Small delay to avoid rate limits
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-    logger.info(`Enriched ${enrichedCount} accounts with tweet data`);
+    logger.info(`Discovery complete: ${discoveryResult.usersCreated} new users, ${discoveryResult.usersUpdated} updated, ${discoveryResult.tweetsSaved} tweets saved`);
 
     // Step 4: Calculate scores and assign categories
-    logger.info('Step 4: Calculating scores and assigning categories...');
+    logger.info('\nStep 4: Calculating scores and assigning categories...');
+
+    // Get all accounts that need scoring
+    const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
+
     let analyzedCount = 0;
     const categoryStats: Record<string, number> = {
       KOL: 0,
@@ -68,9 +53,8 @@ async function runCrawl(): Promise<void> {
       UNCATEGORIZED: 0,
     };
 
-    for (const user of searchResult.users.values()) {
-      const account = await AccountModel.getByTwitterId(user.id);
-      if (account && account.id) {
+    for (const account of accounts) {
+      try {
         // Calculate scores
         const scores = await calculateAllScores(account);
 
@@ -95,24 +79,28 @@ async function runCrawl(): Promise<void> {
 
         // Progress logging
         if (analyzedCount % 10 === 0) {
-          logger.info(`Analyzed ${analyzedCount}/${searchResult.users.size} accounts`);
+          logger.info(`Analyzed ${analyzedCount}/${accounts.length} accounts`);
         }
+      } catch (error) {
+        logger.error(`Error analyzing @${account.username}:`, error);
       }
     }
 
     // Summary
+    logger.info('\n' + '='.repeat(50));
+    logger.info('CRAWL COMPLETED!');
     logger.info('='.repeat(50));
-    logger.info('Crawl completed!');
-    logger.info('='.repeat(50));
-    logger.info(`Total accounts processed: ${analyzedCount}`);
-    logger.info('Category breakdown:');
+    logger.info(`Total accounts discovered: ${discoveryResult.usersCreated + discoveryResult.usersUpdated}`);
+    logger.info(`Total tweets saved: ${discoveryResult.tweetsSaved}`);
+    logger.info(`Total accounts analyzed: ${analyzedCount}`);
+    logger.info('\nCategory breakdown:');
     logger.info(`  - KOL: ${categoryStats.KOL}`);
     logger.info(`  - DEVELOPER: ${categoryStats.DEVELOPER}`);
     logger.info(`  - ACTIVE_USER: ${categoryStats.ACTIVE_USER}`);
     logger.info(`  - UNCATEGORIZED: ${categoryStats.UNCATEGORIZED}`);
     logger.info('='.repeat(50));
 
-    // Show top accounts
+    // Show top accounts by category
     const topKOLs = await AccountModel.list({ category: 'KOL' }, 1, 5, 'confidence', 'desc');
     const topDevs = await AccountModel.list({ category: 'DEVELOPER' }, 1, 5, 'confidence', 'desc');
     const topUsers = await AccountModel.list({ category: 'ACTIVE_USER' }, 1, 5, 'confidence', 'desc');

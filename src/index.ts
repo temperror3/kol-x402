@@ -35,7 +35,6 @@ async function main(): Promise<void> {
 
       // Close workers
       await workers.searchWorker.close();
-      await workers.enrichWorker.close();
       await workers.analyzeWorker.close();
       logger.info('Workers closed');
 

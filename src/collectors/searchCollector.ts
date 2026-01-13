@@ -1,67 +1,66 @@
-import { TweetV2, UserV2 } from 'twitter-api-v2';
 import {
-  getTwitterClient,
-  TWEET_FIELDS,
-  USER_FIELDS,
-  withRateLimit,
-  transformUser,
-} from './twitterClient.js';
+  searchTwitterWithPagination,
+  transformRapidApiUser,
+  transformRapidApiTweet,
+  hasGithubInBio,
+  delay,
+  RapidApiTweet,
+  RapidApiUserInfo,
+} from './rapidApiClient.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { AccountModel, SearchQueryModel } from '../db/account.model.js';
+import { AccountModel, TweetModel, SearchQueryModel } from '../db/account.model.js';
 
 export interface SearchCollectorResult {
-  tweets: TweetV2[];
-  users: Map<string, UserV2>;
+  tweets: RapidApiTweet[];
+  users: Map<string, RapidApiUserInfo>;
   totalFound: number;
 }
 
 /**
- * Search for tweets containing x402-related keywords
- * Discovers tweet authors, reply authors, retweeters, and quoted users
+ * Search for tweets containing x402-related keywords using RapidAPI
+ * Discovers tweet authors from search results
  */
 export async function searchForX402Content(
   keywords: string[] = [...config.searchKeywords.primary, ...config.searchKeywords.secondary],
-  maxResults: number = config.search.maxResultsPerSearch
+  maxPages: number = config.search.maxPages
 ): Promise<SearchCollectorResult> {
-  const client = getTwitterClient();
-  const allTweets: TweetV2[] = [];
-  const allUsers = new Map<string, UserV2>();
+  const allTweets: RapidApiTweet[] = [];
+  const allUsers = new Map<string, RapidApiUserInfo>();
 
   for (const keyword of keywords) {
     try {
       logger.info(`Searching for keyword: "${keyword}"`);
 
-      const result = await withRateLimit(async () => {
-        return client.v2.search(keyword, {
-          max_results: Math.min(maxResults, 100), // Twitter API max is 100 per request
-          'tweet.fields': TWEET_FIELDS,
-          'user.fields': USER_FIELDS,
-          expansions: ['author_id', 'referenced_tweets.id.author_id'],
-        });
-      });
+      const result = await searchTwitterWithPagination(keyword, maxPages, config.search.delayMs);
 
-      if (result.data.data) {
-        allTweets.push(...result.data.data);
-        logger.info(`Found ${result.data.data.length} tweets for "${keyword}"`);
-      }
+      if (result.tweets && result.tweets.length > 0) {
+        allTweets.push(...result.tweets);
 
-      // Extract users from includes
-      if (result.data.includes?.users) {
-        for (const user of result.data.includes.users) {
-          allUsers.set(user.id, user);
+        // Extract unique users from tweets
+        for (const tweet of result.tweets) {
+          if (tweet.user_info && tweet.user_info.rest_id) {
+            allUsers.set(tweet.user_info.rest_id, tweet.user_info);
+          }
         }
+
+        logger.info(`Found ${result.tweets.length} tweets for "${keyword}" (${result.totalPages} pages)`);
       }
 
       // Log search query
-      await SearchQueryModel.log(keyword, result.data.data?.length || 0);
+      await SearchQueryModel.log(keyword, result.tweets?.length || 0);
 
-      // Small delay to avoid rate limits
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Delay between different keyword searches
+      if (keywords.indexOf(keyword) < keywords.length - 1) {
+        logger.debug(`Waiting ${config.search.delayMs}ms before next keyword search...`);
+        await delay(config.search.delayMs);
+      }
     } catch (error) {
       logger.error(`Error searching for "${keyword}":`, error);
     }
   }
+
+  logger.info(`Total: ${allTweets.length} tweets from ${allUsers.size} unique users`);
 
   return {
     tweets: allTweets,
@@ -74,20 +73,20 @@ export async function searchForX402Content(
  * Process discovered users and save to database
  */
 export async function processDiscoveredUsers(
-  users: Map<string, UserV2>
+  users: Map<string, RapidApiUserInfo>
 ): Promise<{ created: number; updated: number }> {
   let created = 0;
   let updated = 0;
 
-  const accounts = Array.from(users.values()).map((user) => ({
-    ...transformUser(user),
+  const accounts = Array.from(users.values()).map((userInfo) => ({
+    ...transformRapidApiUser(userInfo),
     engagement_score: 0,
     tech_score: 0,
     x402_relevance: 0,
     confidence: 0,
     category: 'UNCATEGORIZED' as const,
     x402_tweet_count_30d: 0,
-    has_github: user.description?.toLowerCase().includes('github') || false,
+    has_github: hasGithubInBio(userInfo),
     uses_technical_terms: false,
     posts_code_snippets: false,
     last_active_at: null,
@@ -113,37 +112,64 @@ export async function processDiscoveredUsers(
 }
 
 /**
- * Get accounts of users who engaged with x402 content (retweets, replies)
+ * Process tweets from search results and save to database
  */
-export async function discoverEngagedUsers(tweetIds: string[]): Promise<UserV2[]> {
-  const client = getTwitterClient();
-  const engagedUsers: UserV2[] = [];
+export async function processDiscoveredTweets(
+  tweets: RapidApiTweet[],
+  userAccountMap: Map<string, string> // twitter_id -> account_id
+): Promise<number> {
+  let savedCount = 0;
 
-  // Process in batches to avoid rate limits
-  const batchSize = 10;
-  for (let i = 0; i < tweetIds.length; i += batchSize) {
-    const batch = tweetIds.slice(i, i + batchSize);
-
-    for (const tweetId of batch) {
+  for (const tweet of tweets) {
+    const accountId = userAccountMap.get(tweet.user_info.rest_id);
+    if (accountId) {
+      const transformedTweet = transformRapidApiTweet(tweet, accountId);
       try {
-        // Get retweeters
-        const retweeters = await withRateLimit(async () => {
-          return client.v2.tweetRetweetedBy(tweetId, {
-            'user.fields': USER_FIELDS,
-          });
-        });
-
-        if (retweeters.data) {
-          engagedUsers.push(...retweeters.data);
-        }
-
-        // Small delay
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await TweetModel.bulkInsert([transformedTweet]);
+        savedCount++;
       } catch (error) {
-        logger.error(`Error getting retweeters for tweet ${tweetId}:`, error);
+        // Ignore duplicate tweet errors
+        logger.debug(`Could not save tweet ${tweet.tweet_id}: ${error}`);
       }
     }
   }
 
-  return engagedUsers;
+  logger.info(`Saved ${savedCount} tweets to database`);
+  return savedCount;
+}
+
+/**
+ * Full discovery pipeline: search, save users, save tweets
+ */
+export async function runFullDiscovery(
+  keywords?: string[],
+  maxPages?: number
+): Promise<{
+  usersCreated: number;
+  usersUpdated: number;
+  tweetsSaved: number;
+}> {
+  // Step 1: Search for x402 content
+  const searchResult = await searchForX402Content(keywords, maxPages);
+
+  // Step 2: Save users
+  const { created, updated } = await processDiscoveredUsers(searchResult.users);
+
+  // Step 3: Build user -> account ID map
+  const userAccountMap = new Map<string, string>();
+  for (const [twitterId] of searchResult.users) {
+    const account = await AccountModel.getByTwitterId(twitterId);
+    if (account && account.id) {
+      userAccountMap.set(twitterId, account.id);
+    }
+  }
+
+  // Step 4: Save tweets
+  const tweetsSaved = await processDiscoveredTweets(searchResult.tweets, userAccountMap);
+
+  return {
+    usersCreated: created,
+    usersUpdated: updated,
+    tweetsSaved,
+  };
 }

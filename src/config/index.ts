@@ -16,13 +16,10 @@ export const config = {
   // Redis
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
 
-  // Twitter API
-  twitter: {
-    bearerToken: process.env.TWITTER_BEARER_TOKEN || '',
-    apiKey: process.env.TWITTER_API_KEY || '',
-    apiSecret: process.env.TWITTER_API_SECRET || '',
-    accessToken: process.env.TWITTER_ACCESS_TOKEN || '',
-    accessSecret: process.env.TWITTER_ACCESS_SECRET || '',
+  // RapidAPI for Twitter Search
+  rapidApi: {
+    key: process.env.RAPIDAPI_KEY || '',
+    host: process.env.RAPIDAPI_HOST || 'twitter-api45.p.rapidapi.com',
   },
 
   // Search keywords
@@ -33,8 +30,9 @@ export const config = {
 
   // Search settings
   search: {
-    intervalHours: parseInt(process.env.SEARCH_INTERVAL_HOURS || '24', 10),
-    maxResultsPerSearch: parseInt(process.env.MAX_RESULTS_PER_SEARCH || '100', 10),
+    maxPages: parseInt(process.env.SEARCH_MAX_PAGES || '5', 10),
+    delayMs: parseInt(process.env.SEARCH_DELAY_MS || '2000', 10),
+    searchType: process.env.SEARCH_TYPE || 'Top',
   },
 
   // Categorization thresholds
@@ -59,7 +57,7 @@ export function validateConfig(): void {
   const required = [
     ['SUPABASE_URL', config.supabase.url],
     ['SUPABASE_SERVICE_ROLE_KEY', config.supabase.serviceRoleKey],
-    ['TWITTER_BEARER_TOKEN', config.twitter.bearerToken],
+    ['RAPIDAPI_KEY', config.rapidApi.key],
   ];
 
   const missing = required.filter(([, value]) => !value).map(([key]) => key);

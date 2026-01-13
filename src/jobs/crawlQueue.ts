@@ -1,8 +1,7 @@
 import { Queue, Worker, Job, QueueOptions } from 'bullmq';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { searchForX402Content, processDiscoveredUsers } from '../collectors/searchCollector.js';
-import { fetchUserTweets } from '../collectors/userCollector.js';
+import { runFullDiscovery } from '../collectors/searchCollector.js';
 import { calculateAllScores } from '../scorers/scoreCalculator.js';
 import { assignCategory } from '../categorizer/categoryAssigner.js';
 import { AccountModel } from '../db/account.model.js';
@@ -10,12 +9,7 @@ import { AccountModel } from '../db/account.model.js';
 // Job types
 export interface SearchJobData {
   keywords?: string[];
-  maxResults?: number;
-}
-
-export interface EnrichJobData {
-  twitterId: string;
-  accountId: string;
+  maxPages?: number;
 }
 
 export interface AnalyzeJobData {
@@ -43,12 +37,10 @@ const connectionOptions: QueueOptions['connection'] = {
 
 // Queue names
 const SEARCH_QUEUE = 'x402-search';
-const ENRICH_QUEUE = 'x402-enrich';
 const ANALYZE_QUEUE = 'x402-analyze';
 
 // Queues
 let searchQueue: Queue | null = null;
-let enrichQueue: Queue | null = null;
 let analyzeQueue: Queue | null = null;
 
 export function getSearchQueue(): Queue {
@@ -56,13 +48,6 @@ export function getSearchQueue(): Queue {
     searchQueue = new Queue(SEARCH_QUEUE, { connection: connectionOptions });
   }
   return searchQueue;
-}
-
-export function getEnrichQueue(): Queue {
-  if (!enrichQueue) {
-    enrichQueue = new Queue(ENRICH_QUEUE, { connection: connectionOptions });
-  }
-  return enrichQueue;
 }
 
 export function getAnalyzeQueue(): Queue {
@@ -83,35 +68,33 @@ export function startSearchWorker(): Worker {
         ...config.searchKeywords.primary,
         ...config.searchKeywords.secondary,
       ];
-      const maxResults = job.data.maxResults || config.search.maxResultsPerSearch;
+      const maxPages = job.data.maxPages || config.search.maxPages;
 
-      // Search for x402 content
-      const searchResult = await searchForX402Content(keywords, maxResults);
+      // Run full discovery pipeline (search, save users, save tweets)
+      const result = await runFullDiscovery(keywords, maxPages);
 
-      // Process discovered users
-      const { created, updated } = await processDiscoveredUsers(searchResult.users);
+      // Queue analysis jobs for all discovered accounts
+      const analyzeQ = getAnalyzeQueue();
+      const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
 
-      // Queue enrichment jobs for new accounts
-      const enrichQ = getEnrichQueue();
-      for (const user of searchResult.users.values()) {
-        const account = await AccountModel.getByTwitterId(user.id);
-        if (account && account.id) {
-          await enrichQ.add(
-            'enrich',
-            { twitterId: user.id, accountId: account.id },
-            { delay: 1000 } // Small delay to avoid rate limits
+      for (const account of accounts) {
+        if (account.id) {
+          await analyzeQ.add(
+            'analyze',
+            { accountId: account.id },
+            { delay: 100 }
           );
         }
       }
 
       logger.info(
-        `Search job ${job.id} completed: ${searchResult.totalFound} tweets, ${created} new users, ${updated} updated users`
+        `Search job ${job.id} completed: ${result.tweetsSaved} tweets, ${result.usersCreated} new users, ${result.usersUpdated} updated users`
       );
 
       return {
-        tweetsFound: searchResult.totalFound,
-        usersCreated: created,
-        usersUpdated: updated,
+        tweetsFound: result.tweetsSaved,
+        usersCreated: result.usersCreated,
+        usersUpdated: result.usersUpdated,
       };
     },
     { connection: connectionOptions }
@@ -123,37 +106,6 @@ export function startSearchWorker(): Worker {
 
   worker.on('failed', (job, err) => {
     logger.error(`Search job ${job?.id} failed:`, err);
-  });
-
-  return worker;
-}
-
-export function startEnrichWorker(): Worker {
-  const worker = new Worker(
-    ENRICH_QUEUE,
-    async (job: Job<EnrichJobData>) => {
-      logger.info(`Processing enrich job for ${job.data.twitterId}`);
-
-      // Fetch recent tweets for analysis
-      await fetchUserTweets(job.data.twitterId, job.data.accountId, 100);
-
-      // Queue analysis job
-      const analyzeQ = getAnalyzeQueue();
-      await analyzeQ.add('analyze', { accountId: job.data.accountId });
-
-      logger.info(`Enrich job for ${job.data.twitterId} completed`);
-
-      return { success: true };
-    },
-    { connection: connectionOptions, concurrency: 5 }
-  );
-
-  worker.on('completed', (job) => {
-    logger.debug(`Enrich job ${job.id} completed`);
-  });
-
-  worker.on('failed', (job, err) => {
-    logger.error(`Enrich job ${job?.id} failed:`, err);
   });
 
   return worker;
@@ -218,20 +170,18 @@ export function startAnalyzeWorker(): Worker {
 // Start all workers
 export function startAllWorkers(): {
   searchWorker: Worker;
-  enrichWorker: Worker;
   analyzeWorker: Worker;
 } {
   return {
     searchWorker: startSearchWorker(),
-    enrichWorker: startEnrichWorker(),
     analyzeWorker: startAnalyzeWorker(),
   };
 }
 
 // Add a search job
-export async function triggerSearch(keywords?: string[], maxResults?: number): Promise<string> {
+export async function triggerSearch(keywords?: string[], maxPages?: number): Promise<string> {
   const queue = getSearchQueue();
-  const job = await queue.add('search', { keywords, maxResults });
+  const job = await queue.add('search', { keywords, maxPages });
   logger.info(`Search job ${job.id} added to queue`);
   return job.id!;
 }
@@ -239,6 +189,5 @@ export async function triggerSearch(keywords?: string[], maxResults?: number): P
 // Cleanup
 export async function closeQueues(): Promise<void> {
   if (searchQueue) await searchQueue.close();
-  if (enrichQueue) await enrichQueue.close();
   if (analyzeQueue) await analyzeQueue.close();
 }
