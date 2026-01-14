@@ -264,3 +264,24 @@ export function hasGithubInBio(userInfo: RapidApiUserInfo): boolean {
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Search for a specific user's x402-related tweets
+ * Uses query format: "from:{username} x402"
+ */
+export async function searchUserX402Tweets(
+  username: string,
+  maxPages: number = config.search.maxPages,
+  delayMs: number = config.search.delayMs
+): Promise<RapidApiTweet[]> {
+  // Build query to get user's x402 tweets
+  const query = `from:${username} x402`;
+
+  logger.info(`Searching for x402 tweets from @${username}`);
+
+  const result = await searchTwitterWithPagination(query, maxPages, delayMs);
+
+  logger.info(`Found ${result.tweets.length} x402 tweets from @${username}`);
+
+  return result.tweets;
+}

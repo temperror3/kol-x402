@@ -181,6 +181,30 @@ export const AccountModel = {
     return true;
   },
 
+  // Update AI categorization
+  async updateAICategory(
+    twitterId: string,
+    data: {
+      ai_category: string;
+      ai_reasoning: string;
+      ai_confidence: number;
+    }
+  ): Promise<boolean> {
+    const { error } = await supabase
+      .from('accounts')
+      .update({
+        ...data,
+        ai_categorized_at: new Date().toISOString(),
+      })
+      .eq('twitter_id', twitterId);
+
+    if (error) {
+      console.error('Error updating AI category:', error);
+      return false;
+    }
+    return true;
+  },
+
   // Get accounts needing enrichment (not enriched in last 24 hours)
   async getStaleAccounts(limit = 100): Promise<Account[]> {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

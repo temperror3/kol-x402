@@ -1,26 +1,26 @@
 /**
- * Manual crawl script using RapidAPI Twitter Search
+ * Manual crawl script using RapidAPI Twitter Search + AI Categorization
  *
  * Run with: npm run crawl
  *
- * This script performs a full discovery and analysis cycle:
+ * This script performs a full discovery and AI analysis cycle:
  * 1. Search for x402 content on Twitter via RapidAPI
  * 2. Discover and save users
- * 3. Save their tweets
- * 4. Calculate scores
- * 5. Assign categories
+ * 3. For each user, search their specific x402 tweets
+ * 4. Send tweets to AI (OpenRouter) for categorization
+ * 5. Store AI category and reasoning in database
  */
 
 import { config, validateConfig } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { runFullDiscovery } from '../collectors/searchCollector.js';
-import { calculateAllScores } from '../scorers/scoreCalculator.js';
-import { assignCategory } from '../categorizer/categoryAssigner.js';
+import { searchUserX402Tweets, delay } from '../collectors/rapidApiClient.js';
+import { categorizeUserWithAI } from '../services/openRouterClient.js';
 import { AccountModel } from '../db/account.model.js';
 
 async function runCrawl(): Promise<void> {
   logger.info('='.repeat(50));
-  logger.info('Starting x402 KOL Discovery Crawl (RapidAPI)');
+  logger.info('Starting x402 KOL Discovery Crawl with AI Categorization');
   logger.info('='.repeat(50));
 
   try {
@@ -28,10 +28,14 @@ async function runCrawl(): Promise<void> {
     validateConfig();
     logger.info('Configuration validated');
     logger.info(`Max pages per keyword: ${config.search.maxPages}`);
+    logger.info(`Max pages per user: ${config.search.maxPagesPerUser}`);
     logger.info(`Delay between requests: ${config.search.delayMs}ms`);
+    logger.info(`AI Model: ${config.openRouter.model}`);
 
-    // Step 1 & 2 & 3: Search, save users, save tweets
-    logger.info('\nStep 1-3: Searching and saving data...');
+    // Step 1: Initial discovery - search for x402 keywords to find users
+    logger.info('\n' + '-'.repeat(50));
+    logger.info('Step 1: Initial Discovery - Searching for x402 content...');
+    logger.info('-'.repeat(50));
     const keywords = [...config.searchKeywords.primary, ...config.searchKeywords.secondary];
     logger.info(`Keywords: ${keywords.join(', ')}`);
 
@@ -39,10 +43,11 @@ async function runCrawl(): Promise<void> {
 
     logger.info(`Discovery complete: ${discoveryResult.usersCreated} new users, ${discoveryResult.usersUpdated} updated, ${discoveryResult.tweetsSaved} tweets saved`);
 
-    // Step 4: Calculate scores and assign categories
-    logger.info('\nStep 4: Calculating scores and assigning categories...');
+    // Step 2: Get all discovered accounts for AI analysis
+    logger.info('\n' + '-'.repeat(50));
+    logger.info('Step 2: AI Categorization - Analyzing each user...');
+    logger.info('-'.repeat(50));
 
-    // Get all accounts that need scoring
     const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
 
     let analyzedCount = 0;
@@ -55,31 +60,35 @@ async function runCrawl(): Promise<void> {
 
     for (const account of accounts) {
       try {
-        // Calculate scores
-        const scores = await calculateAllScores(account);
+        // Step 2a: Search for this user's x402 tweets specifically
+        logger.info(`\nAnalyzing @${account.username}...`);
 
-        // Assign category
-        const category = assignCategory(account, scores);
-        categoryStats[category]++;
+        const userTweets = await searchUserX402Tweets(account.username, config.search.maxPagesPerUser);
 
-        // Update account
-        await AccountModel.updateScores(account.twitter_id, {
-          engagement_score: scores.engagementScore,
-          tech_score: scores.techScore,
-          x402_relevance: scores.x402Relevance,
-          confidence: scores.confidence,
-          category,
-          x402_tweet_count_30d: scores.x402TweetCount30d,
-          has_github: scores.hasGithub,
-          uses_technical_terms: scores.usesTechnicalTerms,
-          posts_code_snippets: scores.postsCodeSnippets,
+        // Step 2b: Send to AI for categorization
+        const aiResult = await categorizeUserWithAI(account, userTweets);
+        categoryStats[aiResult.category]++;
+
+        // Step 2c: Save AI categorization to database
+        await AccountModel.updateAICategory(account.twitter_id, {
+          ai_category: aiResult.category,
+          ai_reasoning: aiResult.reasoning,
+          ai_confidence: aiResult.confidence,
         });
 
         analyzedCount++;
 
+        logger.info(`  Category: ${aiResult.category} (confidence: ${aiResult.confidence.toFixed(2)})`);
+        logger.info(`  Reasoning: ${aiResult.reasoning.substring(0, 100)}...`);
+
         // Progress logging
-        if (analyzedCount % 10 === 0) {
-          logger.info(`Analyzed ${analyzedCount}/${accounts.length} accounts`);
+        if (analyzedCount % 5 === 0) {
+          logger.info(`\n[Progress] Analyzed ${analyzedCount}/${accounts.length} accounts`);
+        }
+
+        // Delay between users to avoid rate limits
+        if (analyzedCount < accounts.length) {
+          await delay(config.search.delayMs);
         }
       } catch (error) {
         logger.error(`Error analyzing @${account.username}:`, error);
@@ -92,37 +101,58 @@ async function runCrawl(): Promise<void> {
     logger.info('='.repeat(50));
     logger.info(`Total accounts discovered: ${discoveryResult.usersCreated + discoveryResult.usersUpdated}`);
     logger.info(`Total tweets saved: ${discoveryResult.tweetsSaved}`);
-    logger.info(`Total accounts analyzed: ${analyzedCount}`);
-    logger.info('\nCategory breakdown:');
+    logger.info(`Total accounts analyzed with AI: ${analyzedCount}`);
+    logger.info('\nAI Category breakdown:');
     logger.info(`  - KOL: ${categoryStats.KOL}`);
     logger.info(`  - DEVELOPER: ${categoryStats.DEVELOPER}`);
     logger.info(`  - ACTIVE_USER: ${categoryStats.ACTIVE_USER}`);
     logger.info(`  - UNCATEGORIZED: ${categoryStats.UNCATEGORIZED}`);
     logger.info('='.repeat(50));
 
-    // Show top accounts by category
-    const topKOLs = await AccountModel.list({ category: 'KOL' }, 1, 5, 'confidence', 'desc');
-    const topDevs = await AccountModel.list({ category: 'DEVELOPER' }, 1, 5, 'confidence', 'desc');
-    const topUsers = await AccountModel.list({ category: 'ACTIVE_USER' }, 1, 5, 'confidence', 'desc');
+    // Show top accounts by AI category
+    logger.info('\n' + '-'.repeat(50));
+    logger.info('Top Accounts by AI Category');
+    logger.info('-'.repeat(50));
 
-    if (topKOLs.data.length > 0) {
+    // Query accounts sorted by AI confidence
+    const { data: allAccounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
+
+    const kolAccounts = allAccounts
+      .filter((a) => a.ai_category === 'KOL')
+      .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
+      .slice(0, 5);
+
+    const devAccounts = allAccounts
+      .filter((a) => a.ai_category === 'DEVELOPER')
+      .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
+      .slice(0, 5);
+
+    const userAccounts = allAccounts
+      .filter((a) => a.ai_category === 'ACTIVE_USER')
+      .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
+      .slice(0, 5);
+
+    if (kolAccounts.length > 0) {
       logger.info('\nTop KOLs:');
-      topKOLs.data.forEach((acc, i) => {
-        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.confidence}, followers: ${acc.followers_count})`);
+      kolAccounts.forEach((acc, i) => {
+        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)}, followers: ${acc.followers_count})`);
+        logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
       });
     }
 
-    if (topDevs.data.length > 0) {
+    if (devAccounts.length > 0) {
       logger.info('\nTop Developers:');
-      topDevs.data.forEach((acc, i) => {
-        logger.info(`  ${i + 1}. @${acc.username} (tech_score: ${acc.tech_score}, has_github: ${acc.has_github})`);
+      devAccounts.forEach((acc, i) => {
+        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
+        logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
       });
     }
 
-    if (topUsers.data.length > 0) {
+    if (userAccounts.length > 0) {
       logger.info('\nTop Active Users:');
-      topUsers.data.forEach((acc, i) => {
-        logger.info(`  ${i + 1}. @${acc.username} (x402_relevance: ${acc.x402_relevance})`);
+      userAccounts.forEach((acc, i) => {
+        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
+        logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
       });
     }
 

@@ -40,6 +40,19 @@ export interface Account {
   last_enriched_at: string | null;
   created_at?: string;
   updated_at?: string;
+
+  // AI categorization
+  ai_category?: string;
+  ai_reasoning?: string;
+  ai_confidence?: number;
+  ai_categorized_at?: string;
+}
+
+// AI categorization result
+export interface AICategoryResult {
+  category: 'KOL' | 'DEVELOPER' | 'ACTIVE_USER' | 'UNCATEGORIZED';
+  confidence: number;
+  reasoning: string;
 }
 
 // Tweet data for analysis
