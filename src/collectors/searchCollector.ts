@@ -80,17 +80,7 @@ export async function processDiscoveredUsers(
 
   const accounts = Array.from(users.values()).map((userInfo) => ({
     ...transformRapidApiUser(userInfo),
-    engagement_score: 0,
-    tech_score: 0,
-    x402_relevance: 0,
-    confidence: 0,
-    category: 'UNCATEGORIZED' as const,
-    x402_tweet_count_30d: 0,
     has_github: hasGithubInBio(userInfo),
-    uses_technical_terms: false,
-    posts_code_snippets: false,
-    last_active_at: null,
-    last_enriched_at: null,
   }));
 
   // Check which accounts exist

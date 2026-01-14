@@ -1,14 +1,7 @@
 // Account category types
 export type Category = 'KOL' | 'DEVELOPER' | 'ACTIVE_USER' | 'UNCATEGORIZED';
 
-// Score interface as per spec
-export interface AccountScores {
-  engagementScore: number;  // 0-100
-  techScore: number;        // 0-100
-  x402Relevance: number;    // 0-100
-}
-
-// Full account model
+// Full account model (matches current database schema)
 export interface Account {
   id?: string;
   twitter_id: string;
@@ -20,32 +13,18 @@ export interface Account {
   tweet_count: number;
   profile_image_url: string | null;
 
-  // Scores
-  engagement_score: number;
-  tech_score: number;
-  x402_relevance: number;
-  confidence: number;
-
-  // Category
-  category: Category;
-
   // Metadata
-  x402_tweet_count_30d: number;
   has_github: boolean;
-  uses_technical_terms: boolean;
-  posts_code_snippets: boolean;
-
-  // Timestamps
-  last_active_at: string | null;
-  last_enriched_at: string | null;
-  created_at?: string;
-  updated_at?: string;
 
   // AI categorization
   ai_category?: string;
   ai_reasoning?: string;
   ai_confidence?: number;
   ai_categorized_at?: string;
+
+  // Timestamps
+  created_at?: string;
+  updated_at?: string;
 }
 
 // AI categorization result
@@ -125,11 +104,9 @@ export interface PaginatedResponse<T> {
   };
 }
 
+// Account filters for API queries
 export interface AccountFilters {
-  category?: Category;
-  minEngagementScore?: number;
-  minTechScore?: number;
-  minX402Relevance?: number;
-  minConfidence?: number;
+  aiCategory?: Category;
+  minAiConfidence?: number;
   hasGithub?: boolean;
 }

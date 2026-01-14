@@ -19,14 +19,16 @@ const SYSTEM_PROMPT = `You are an expert analyst categorizing Twitter/X users ba
 
 x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
 
-Analyze the user's tweets and categorize them into ONE of these categories:
+Analyze the user's tweets and engagement metrics to categorize them into ONE of these categories:
 
 1. KOL (Key Opinion Leader)
-   - Has significant influence and followers
+   - Has significant influence (high follower count, typically 1000+)
    - Creates original content about x402
    - Provides thought leadership, opinions, or analysis
    - Promotes or advocates for x402 adoption
-   - High engagement on their posts
+   - High engagement metrics: many views, likes, retweets, quotes
+   - Good engagement rate (likes+retweets+replies relative to views)
+   - Content gets bookmarked (indicates valuable insights)
 
 2. DEVELOPER
    - Discusses technical implementation details
@@ -34,54 +36,116 @@ Analyze the user's tweets and categorize them into ONE of these categories:
    - Asks or answers technical questions
    - Mentions APIs, SDKs, protocols, or integration
    - Shows evidence of building with x402
+   - May have lower engagement but high technical depth
 
 3. ACTIVE_USER
    - Engages with x402 content (replies, retweets)
    - Asks questions about using x402
    - Shows interest but not technical depth
+   - Lower follower count and engagement metrics
    - May be a potential adopter or tester
 
 4. UNCATEGORIZED
    - Only 1-2 mentions with no clear pattern
+   - Very low or zero engagement on x402 content
    - Spam or irrelevant content
    - Insufficient data to determine category
+
+Consider these engagement signals:
+- High views + high engagement rate = influential content
+- Many retweets/quotes = content worth sharing
+- Bookmarks = content worth saving for reference
+- Replies = conversation starter
 
 Respond ONLY with valid JSON in this exact format:
 {
   "category": "KOL" | "DEVELOPER" | "ACTIVE_USER" | "UNCATEGORIZED",
   "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of why this category was chosen"
+  "reasoning": "Brief explanation of why this category was chosen, mentioning key engagement metrics if relevant"
 }`;
 
 function formatTweets(tweets: RapidApiTweet[]): string {
   return tweets
     .map((tweet, index) => {
       const date = new Date(tweet.created_at).toLocaleDateString();
+      const views = tweet.views ? parseInt(tweet.views, 10) : 0;
       return `---
 Tweet ${index + 1} (${date}):
 "${tweet.text}"
-Likes: ${tweet.favorites} | Retweets: ${tweet.retweets} | Replies: ${tweet.replies}
+Views: ${views.toLocaleString()} | Likes: ${tweet.favorites} | Retweets: ${tweet.retweets} | Replies: ${tweet.replies} | Quotes: ${tweet.quotes} | Bookmarks: ${tweet.bookmarks}
 ---`;
     })
     .join('\n\n');
 }
 
+function calculateEngagementStats(tweets: RapidApiTweet[]): {
+  totalViews: number;
+  totalLikes: number;
+  totalRetweets: number;
+  totalReplies: number;
+  totalQuotes: number;
+  totalBookmarks: number;
+  avgEngagementRate: number;
+} {
+  let totalViews = 0;
+  let totalLikes = 0;
+  let totalRetweets = 0;
+  let totalReplies = 0;
+  let totalQuotes = 0;
+  let totalBookmarks = 0;
+
+  for (const tweet of tweets) {
+    const views = tweet.views ? parseInt(tweet.views, 10) : 0;
+    totalViews += views;
+    totalLikes += tweet.favorites || 0;
+    totalRetweets += tweet.retweets || 0;
+    totalReplies += tweet.replies || 0;
+    totalQuotes += tweet.quotes || 0;
+    totalBookmarks += tweet.bookmarks || 0;
+  }
+
+  // Calculate average engagement rate (engagements / views * 100)
+  const totalEngagements = totalLikes + totalRetweets + totalReplies + totalQuotes;
+  const avgEngagementRate = totalViews > 0 ? (totalEngagements / totalViews) * 100 : 0;
+
+  return {
+    totalViews,
+    totalLikes,
+    totalRetweets,
+    totalReplies,
+    totalQuotes,
+    totalBookmarks,
+    avgEngagementRate,
+  };
+}
+
 function buildUserPrompt(account: Account, tweets: RapidApiTweet[]): string {
   const tweetsFormatted = formatTweets(tweets);
+  const stats = calculateEngagementStats(tweets);
 
   return `Analyze this Twitter user's x402-related activity:
 
 **Username:** @${account.username}
 **Display Name:** ${account.display_name}
 **Bio:** ${account.bio || 'No bio'}
-**Followers:** ${account.followers_count}
-**Following:** ${account.following_count}
+**Followers:** ${account.followers_count.toLocaleString()}
+**Following:** ${account.following_count.toLocaleString()}
 
-**Their x402-related tweets (${tweets.length} total):**
+**Engagement Summary for x402 tweets:**
+- Total Tweets: ${tweets.length}
+- Total Views: ${stats.totalViews.toLocaleString()}
+- Total Likes: ${stats.totalLikes.toLocaleString()}
+- Total Retweets: ${stats.totalRetweets.toLocaleString()}
+- Total Replies: ${stats.totalReplies.toLocaleString()}
+- Total Quotes: ${stats.totalQuotes.toLocaleString()}
+- Total Bookmarks: ${stats.totalBookmarks.toLocaleString()}
+- Average Engagement Rate: ${stats.avgEngagementRate.toFixed(2)}%
+
+**Their x402-related tweets:**
 
 ${tweetsFormatted}
 
-Based on these tweets, categorize this user.`;
+Based on these tweets and engagement metrics, categorize this user.`;
 }
 
 function parseAIResponse(content: string): AICategoryResult {

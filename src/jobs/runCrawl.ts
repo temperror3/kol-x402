@@ -51,6 +51,7 @@ async function runCrawl(): Promise<void> {
     const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
 
     let analyzedCount = 0;
+    let skippedCount = 0;
     const categoryStats: Record<string, number> = {
       KOL: 0,
       DEVELOPER: 0,
@@ -60,6 +61,13 @@ async function runCrawl(): Promise<void> {
 
     for (const account of accounts) {
       try {
+        // Skip users that already have AI categorization
+        if (account.ai_category && account.ai_categorized_at) {
+          logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category}`);
+          skippedCount++;
+          continue;
+        }
+
         // Step 2a: Search for this user's x402 tweets specifically
         logger.info(`\nAnalyzing @${account.username}...`);
 
@@ -102,6 +110,7 @@ async function runCrawl(): Promise<void> {
     logger.info(`Total accounts discovered: ${discoveryResult.usersCreated + discoveryResult.usersUpdated}`);
     logger.info(`Total tweets saved: ${discoveryResult.tweetsSaved}`);
     logger.info(`Total accounts analyzed with AI: ${analyzedCount}`);
+    logger.info(`Total accounts skipped (already categorized): ${skippedCount}`);
     logger.info('\nAI Category breakdown:');
     logger.info(`  - KOL: ${categoryStats.KOL}`);
     logger.info(`  - DEVELOPER: ${categoryStats.DEVELOPER}`);

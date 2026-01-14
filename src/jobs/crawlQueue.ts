@@ -2,8 +2,8 @@ import { Queue, Worker, Job, QueueOptions } from 'bullmq';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { runFullDiscovery } from '../collectors/searchCollector.js';
-import { calculateAllScores } from '../scorers/scoreCalculator.js';
-import { assignCategory } from '../categorizer/categoryAssigner.js';
+import { searchUserX402Tweets } from '../collectors/rapidApiClient.js';
+import { categorizeUserWithAI } from '../services/openRouterClient.js';
 import { AccountModel } from '../db/account.model.js';
 
 // Job types
@@ -73,11 +73,11 @@ export function startSearchWorker(): Worker {
       // Run full discovery pipeline (search, save users, save tweets)
       const result = await runFullDiscovery(keywords, maxPages);
 
-      // Queue analysis jobs for all discovered accounts
+      // Queue analysis jobs for uncategorized accounts only
       const analyzeQ = getAnalyzeQueue();
-      const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
+      const uncategorized = await AccountModel.getUncategorizedAccounts(1000);
 
-      for (const account of accounts) {
+      for (const account of uncategorized) {
         if (account.id) {
           await analyzeQ.add(
             'analyze',
@@ -124,36 +124,36 @@ export function startAnalyzeWorker(): Worker {
         return { success: false, reason: 'Account not found' };
       }
 
-      // Calculate scores
-      const scores = await calculateAllScores(account);
+      // Skip if already categorized
+      if (account.ai_category && account.ai_categorized_at) {
+        logger.info(`Skipping @${account.username} - already categorized`);
+        return { success: true, skipped: true };
+      }
 
-      // Assign category
-      const category = assignCategory(account, scores);
+      // Search for user's x402 tweets
+      const userTweets = await searchUserX402Tweets(account.username, config.search.maxPagesPerUser);
 
-      // Update account with scores and category
-      await AccountModel.updateScores(account.twitter_id, {
-        engagement_score: scores.engagementScore,
-        tech_score: scores.techScore,
-        x402_relevance: scores.x402Relevance,
-        confidence: scores.confidence,
-        category,
-        x402_tweet_count_30d: scores.x402TweetCount30d,
-        has_github: scores.hasGithub,
-        uses_technical_terms: scores.usesTechnicalTerms,
-        posts_code_snippets: scores.postsCodeSnippets,
+      // Categorize with AI
+      const aiResult = await categorizeUserWithAI(account, userTweets);
+
+      // Update account with AI category
+      await AccountModel.updateAICategory(account.twitter_id, {
+        ai_category: aiResult.category,
+        ai_reasoning: aiResult.reasoning,
+        ai_confidence: aiResult.confidence,
       });
 
       logger.info(
-        `Analyze job for @${account.username} completed: category=${category}, confidence=${scores.confidence}`
+        `Analyze job for @${account.username} completed: category=${aiResult.category}, confidence=${aiResult.confidence}`
       );
 
       return {
         success: true,
-        category,
-        scores,
+        category: aiResult.category,
+        confidence: aiResult.confidence,
       };
     },
-    { connection: connectionOptions, concurrency: 10 }
+    { connection: connectionOptions, concurrency: 5 }
   );
 
   worker.on('completed', (job) => {

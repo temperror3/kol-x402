@@ -70,26 +70,17 @@ export const AccountModel = {
     filters: AccountFilters = {},
     page = 1,
     limit = 50,
-    orderBy = 'confidence',
+    orderBy = 'ai_confidence',
     orderDir: 'asc' | 'desc' = 'desc'
   ): Promise<PaginatedResponse<Account>> {
     let query = supabase.from('accounts').select('*', { count: 'exact' });
 
-    // Apply filters
-    if (filters.category) {
-      query = query.eq('category', filters.category);
+    // Apply filters (AI category only)
+    if (filters.aiCategory) {
+      query = query.eq('ai_category', filters.aiCategory);
     }
-    if (filters.minEngagementScore !== undefined) {
-      query = query.gte('engagement_score', filters.minEngagementScore);
-    }
-    if (filters.minTechScore !== undefined) {
-      query = query.gte('tech_score', filters.minTechScore);
-    }
-    if (filters.minX402Relevance !== undefined) {
-      query = query.gte('x402_relevance', filters.minX402Relevance);
-    }
-    if (filters.minConfidence !== undefined) {
-      query = query.gte('confidence', filters.minConfidence);
+    if (filters.minAiConfidence !== undefined) {
+      query = query.gte('ai_confidence', filters.minAiConfidence);
     }
     if (filters.hasGithub !== undefined) {
       query = query.eq('has_github', filters.hasGithub);
@@ -118,12 +109,12 @@ export const AccountModel = {
     };
   },
 
-  // Get category stats
-  async getCategoryStats(): Promise<Record<string, number>> {
-    const { data, error } = await supabase.from('accounts').select('category');
+  // Get AI category stats
+  async getAICategoryStats(): Promise<Record<string, number>> {
+    const { data, error } = await supabase.from('accounts').select('ai_category');
 
     if (error) {
-      console.error('Error getting category stats:', error);
+      console.error('Error getting AI category stats:', error);
       return {};
     }
 
@@ -135,39 +126,14 @@ export const AccountModel = {
     };
 
     data?.forEach((row) => {
-      if (row.category in stats) {
-        stats[row.category]++;
+      if (row.ai_category && row.ai_category in stats) {
+        stats[row.ai_category]++;
+      } else if (!row.ai_category) {
+        stats.UNCATEGORIZED++;
       }
     });
 
     return stats;
-  },
-
-  // Update account scores and category
-  async updateScores(
-    twitterId: string,
-    scores: {
-      engagement_score: number;
-      tech_score: number;
-      x402_relevance: number;
-      confidence: number;
-      category: string;
-      x402_tweet_count_30d: number;
-      has_github: boolean;
-      uses_technical_terms: boolean;
-      posts_code_snippets: boolean;
-    }
-  ): Promise<boolean> {
-    const { error } = await supabase
-      .from('accounts')
-      .update({ ...scores, last_enriched_at: new Date().toISOString() })
-      .eq('twitter_id', twitterId);
-
-    if (error) {
-      console.error('Error updating scores:', error);
-      return false;
-    }
-    return true;
   },
 
   // Delete account
@@ -205,18 +171,16 @@ export const AccountModel = {
     return true;
   },
 
-  // Get accounts needing enrichment (not enriched in last 24 hours)
-  async getStaleAccounts(limit = 100): Promise<Account[]> {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
+  // Get accounts needing AI categorization (not categorized yet)
+  async getUncategorizedAccounts(limit = 100): Promise<Account[]> {
     const { data, error } = await supabase
       .from('accounts')
       .select('*')
-      .or(`last_enriched_at.is.null,last_enriched_at.lt.${oneDayAgo}`)
+      .is('ai_category', null)
       .limit(limit);
 
     if (error) {
-      console.error('Error getting stale accounts:', error);
+      console.error('Error getting uncategorized accounts:', error);
       return [];
     }
     return data || [];
