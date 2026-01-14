@@ -12,10 +12,15 @@ async function main(): Promise<void> {
     // Create Express app
     const app = createApp();
 
-    // Start job workers
-    logger.info('Starting job workers...');
-    const workers = startAllWorkers();
-    logger.info('Job workers started');
+    // Start job workers only if enabled (requires Redis)
+    let workers: ReturnType<typeof startAllWorkers> | null = null;
+    if (config.enableWorkers) {
+      logger.info('Starting job workers...');
+      workers = startAllWorkers();
+      logger.info('Job workers started');
+    } else {
+      logger.info('Job workers disabled (set ENABLE_WORKERS=true to enable)');
+    }
 
     // Start server
     const server = app.listen(config.port, () => {
@@ -33,14 +38,16 @@ async function main(): Promise<void> {
         logger.info('HTTP server closed');
       });
 
-      // Close workers
-      await workers.searchWorker.close();
-      await workers.analyzeWorker.close();
-      logger.info('Workers closed');
+      // Close workers if they were started
+      if (workers) {
+        await workers.searchWorker.close();
+        await workers.analyzeWorker.close();
+        logger.info('Workers closed');
 
-      // Close queues
-      await closeQueues();
-      logger.info('Queues closed');
+        // Close queues
+        await closeQueues();
+        logger.info('Queues closed');
+      }
 
       process.exit(0);
     };

@@ -13,8 +13,9 @@ export const config = {
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   },
 
-  // Redis
+  // Redis (only needed if workers are enabled)
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+  enableWorkers: process.env.ENABLE_WORKERS === 'true',
 
   // RapidAPI for Twitter Search
   rapidApi: {
