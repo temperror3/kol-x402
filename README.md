@@ -1,12 +1,12 @@
 # x402 KOL Finder
 
-A tool to discover, analyze, and categorize x402-related accounts on Twitter/X for outreach and engagement campaigns.
+A tool to discover, analyze, and categorize x402-related accounts on Twitter/X using AI for outreach and engagement campaigns.
 
 ## Features
 
 - **Discovery**: Search Twitter for x402-related content using RapidAPI
-- **Scoring**: Calculate engagement, technical depth, and x402 relevance scores
-- **Rule-Based Categorization**: Automatically classify accounts as KOL, Developer, or Active User based on configurable thresholds
+- **AI-Powered Categorization**: Uses OpenRouter AI to analyze tweets and classify accounts
+- **Smart Analysis**: AI considers engagement metrics, content quality, and technical depth
 - **Dashboard**: Modern React frontend to browse and analyze accounts
 - **REST API**: Full API for querying and managing discovered accounts
 - **Export**: CSV export for outreach campaigns
@@ -18,6 +18,7 @@ A tool to discover, analyze, and categorize x402-related accounts on Twitter/X f
 - **TypeScript** - Type safety
 - **Supabase** - PostgreSQL database
 - **RapidAPI** - Twitter/X data access
+- **OpenRouter AI** - AI-powered categorization
 - **BullMQ** + **Redis** - Job queue (optional)
 
 ### Frontend
@@ -35,47 +36,50 @@ A tool to discover, analyze, and categorize x402-related accounts on Twitter/X f
 | **DEVELOPER** | Technical users with code/GitHub presence | API hosting invitations |
 | **ACTIVE_USER** | Users engaging with x402 content | Platform onboarding |
 
-## Scoring Model
+## How AI Categorization Works
 
-### Engagement Score (0-100)
-```
-engagementRate = (likes + retweets + replies) / followers
-engagementScore = min(100, engagementRate * 1000)
-```
-A 5% engagement rate = score of 50
+The system uses OpenRouter AI to analyze each user's x402-related tweets and engagement metrics.
 
-### Tech Score (0-100)
-- +20 → GitHub link detected
-- +10 → Each code snippet tweet (max 30 points)
-- +2 → Each technical keyword occurrence
+### What AI Analyzes
 
-### x402 Relevance (0-100)
-- +15 → Primary keyword per tweet (x402, #x402, x402 protocol, HTTP 402)
-- +8 → Secondary keyword per tweet (402 payment, crypto payments API, web monetization)
-- +5 → Engagement with x402 content
+1. **User Profile**: Username, bio, follower count
+2. **Tweet Content**: All x402-related tweets
+3. **Engagement Metrics**:
+   - Views, Likes, Retweets
+   - Replies, Quotes, Bookmarks
+   - Engagement rate (engagements / views)
 
-### Confidence Score
-```
-confidence = (engagement * 0.3) + (tech * 0.3) + (x402Relevance * 0.4)
-```
+### AI Categorization Criteria
 
-## Category Rules
+**KOL (Key Opinion Leader)**
+- Significant influence (1000+ followers)
+- Creates original content about x402
+- High engagement: many views, likes, retweets
+- Content gets bookmarked (valuable insights)
 
-### KOL
-- engagementScore >= 50
-- followers >= 1000
-- x402Relevance >= 30
-- x402 tweets in 30 days >= 3
+**DEVELOPER**
+- Discusses technical implementation
+- Shares code snippets or GitHub links
+- Asks/answers technical questions
+- Shows evidence of building with x402
 
-### DEVELOPER
-- techScore >= 50
-- Has GitHub link
-- Uses technical terms
-- Posts code snippets
+**ACTIVE_USER**
+- Engages with x402 content (replies, retweets)
+- Shows interest but not technical depth
+- Lower follower count and engagement
+- Potential adopter or tester
 
-### ACTIVE_USER
-- x402Relevance >= 20
-- Does not meet KOL or Developer thresholds
+**UNCATEGORIZED**
+- Only 1-2 mentions with no clear pattern
+- Very low engagement on x402 content
+- Insufficient data to determine category
+
+### AI Output
+
+For each user, the AI returns:
+- **Category**: KOL, DEVELOPER, ACTIVE_USER, or UNCATEGORIZED
+- **Confidence**: 0-100% confidence score
+- **Reasoning**: Explanation of why this category was chosen
 
 ## Quick Start
 
@@ -84,6 +88,7 @@ confidence = (engagement * 0.3) + (tech * 0.3) + (x402Relevance * 0.4)
 - Node.js 20+
 - Supabase account (free tier works)
 - RapidAPI account with Twitter API subscription
+- OpenRouter API key (free tier available)
 
 ### 1. Clone and Install
 
@@ -163,11 +168,17 @@ CREATE INDEX IF NOT EXISTS idx_tweets_account_id ON tweets(account_id);
 CREATE INDEX IF NOT EXISTS idx_tweets_created_at ON tweets(created_at DESC);
 ```
 
-### 3. Get RapidAPI Access
+### 3. Get API Keys
 
+**RapidAPI (Twitter Data)**
 1. Go to https://rapidapi.com
 2. Subscribe to [Twitter API](https://rapidapi.com/omarmhaimdat/api/twitter-api45)
 3. Copy your API key
+
+**OpenRouter (AI Categorization)**
+1. Go to https://openrouter.ai
+2. Create an account and get your API key
+3. Free tier includes access to `xiaomi/mimo-v2-flash:free` model
 
 ### 4. Configure Environment
 
@@ -190,8 +201,15 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 RAPIDAPI_KEY=your_rapidapi_key
 RAPIDAPI_HOST=twitter-api45.p.rapidapi.com
 
+# OpenRouter AI
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free
+
 # Search Keywords
 SEARCH_KEYWORDS_PRIMARY=x402
+
+# CORS (for production)
+ALLOWED_ORIGINS=http://localhost:5173
 
 # Redis (optional)
 REDIS_URL=redis://localhost:6379
@@ -222,7 +240,17 @@ Both backend and frontend can be deployed to Vercel.
 3. Configure:
    - **Root Directory:** `/` (leave empty)
    - **Framework:** `Other`
-4. Add environment variables (see `.env.example`)
+4. Add environment variables:
+   - `NODE_ENV` = `production`
+   - `SUPABASE_URL` = your Supabase URL
+   - `SUPABASE_ANON_KEY` = your Supabase anon key
+   - `SUPABASE_SERVICE_ROLE_KEY` = your Supabase service role key
+   - `RAPIDAPI_KEY` = your RapidAPI key
+   - `RAPIDAPI_HOST` = `twitter-api45.p.rapidapi.com`
+   - `OPENROUTER_API_KEY` = your OpenRouter API key
+   - `OPENROUTER_MODEL` = `xiaomi/mimo-v2-flash:free`
+   - `ALLOWED_ORIGINS` = `*` (update after frontend deploy)
+   - `ENABLE_WORKERS` = `false`
 5. Deploy
 
 ### Deploy Frontend
@@ -238,7 +266,10 @@ Both backend and frontend can be deployed to Vercel.
 
 ### Update CORS
 
-After deploying frontend, update backend's `ALLOWED_ORIGINS` environment variable with your frontend URL.
+After deploying frontend, update backend's `ALLOWED_ORIGINS` environment variable:
+```
+https://your-frontend.vercel.app
+```
 
 ## API Endpoints
 
@@ -264,7 +295,7 @@ After deploying frontend, update backend's `ALLOWED_ORIGINS` environment variabl
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/search/run` | Trigger new search |
+| POST | `/api/search/run` | Trigger new search & AI categorization |
 | GET | `/api/search/status` | Get job queue status |
 | GET | `/api/search/keywords` | Get search keywords |
 
@@ -273,7 +304,7 @@ After deploying frontend, update backend's `ALLOWED_ORIGINS` environment variabl
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/analytics/summary` | Category stats & top accounts |
-| GET | `/api/analytics/confidence-distribution` | Confidence score distribution |
+| GET | `/api/analytics/confidence-distribution` | AI confidence distribution |
 | GET | `/api/analytics/export` | Export CSV |
 | GET | `/api/analytics/outreach` | Outreach recommendations |
 
@@ -289,7 +320,7 @@ curl "http://localhost:3000/api/accounts?category=KOL&orderBy=ai_confidence&limi
 curl "http://localhost:3000/api/analytics/export?category=DEVELOPER" > developers.csv
 ```
 
-### Trigger new search
+### Trigger new search (discovers users & runs AI categorization)
 ```bash
 curl -X POST "http://localhost:3000/api/search/run" \
   -H "Content-Type: application/json" \
@@ -313,7 +344,7 @@ kol-finding-x402/
 │   │   ├── rapidApiClient.ts # RapidAPI Twitter client
 │   │   └── searchCollector.ts
 │   ├── services/
-│   │   └── openRouterClient.ts
+│   │   └── openRouterClient.ts # AI categorization
 │   ├── jobs/
 │   │   ├── crawlQueue.ts     # BullMQ jobs
 │   │   └── runCrawl.ts       # Manual crawl
@@ -352,17 +383,6 @@ kol-finding-x402/
 
 ## Configuration
 
-### Thresholds (via environment)
-
-```env
-KOL_MIN_FOLLOWERS=1000
-KOL_MIN_ENGAGEMENT_SCORE=50
-KOL_MIN_X402_RELEVANCE=30
-KOL_MIN_X402_TWEETS_30D=3
-DEV_MIN_TECH_SCORE=50
-USER_MIN_X402_RELEVANCE=20
-```
-
 ### Search Keywords
 
 Configure in `.env`:
@@ -372,12 +392,23 @@ SEARCH_KEYWORDS_PRIMARY=x402,#x402,x402 protocol
 SEARCH_KEYWORDS_SECONDARY=402 payment,crypto payments API
 ```
 
+### AI Model
+
+You can change the AI model in `.env`:
+```env
+OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free
+```
+
+Other free models available on OpenRouter:
+- `mistralai/mistral-7b-instruct:free`
+- `google/gemma-2-9b-it:free`
+
 ## Outputs
 
-1. **Ranked KOL list** → Promotion targets
+1. **AI-Categorized KOL list** → Promotion targets with confidence scores
 2. **Qualified developer leads** → API hosting candidates
 3. **Active users** → Platform onboarding
-4. **CSV exports** → Outreach automation
+4. **CSV exports** → Outreach automation with AI reasoning
 
 ## License
 
