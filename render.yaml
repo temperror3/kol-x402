@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: kol-finder-api
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: RAPIDAPI_HOST
+        value: twitter-api45.p.rapidapi.com
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: xiaomi/mimo-v2-flash:free
+      - key: ENABLE_WORKERS
+        value: "false"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SEARCH_KEYWORDS_PRIMARY
+        value: x402
+      - key: SEARCH_MAX_PAGES
+        value: "1"
+      - key: SEARCH_MAX_PAGES_PER_USER
+        value: "1"
+      - key: SEARCH_DELAY_MS
+        value: "2000"
+      - key: SEARCH_TYPE
+        value: Latest
