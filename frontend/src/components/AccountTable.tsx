@@ -48,9 +48,9 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
               </th>
               <SortableHeader field="ai_confidence">Confidence</SortableHeader>
               <SortableHeader field="followers_count">Followers</SortableHeader>
-              <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              {/* <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 GitHub
-              </th>
+              </th> */}
               <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 Actions
               </th>
@@ -106,7 +106,7 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
                     {account.followers_count.toLocaleString()}
                   </span>
                 </td>
-                <td className="px-6 py-4">
+                {/* <td className="px-6 py-4">
                   {account.has_github ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-full">
                       <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
@@ -117,7 +117,7 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
                   ) : (
                     <span className="text-slate-400 text-sm">No</span>
                   )}
-                </td>
+                </td> */}
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Link

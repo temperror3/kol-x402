@@ -39,7 +39,7 @@ router.get('/', async (req: Request, res: Response) => {
       query.orderDir
     );
 
-    // Transform response to use AI fields
+    // Transform response to use AI fields (matching frontend types)
     const transformedData = result.data.map((account) => ({
       id: account.id,
       twitter_id: account.twitter_id,
@@ -48,16 +48,18 @@ router.get('/', async (req: Request, res: Response) => {
       bio: account.bio,
       followers_count: account.followers_count,
       following_count: account.following_count,
+      tweet_count: account.tweet_count || 0,
       profile_image_url: account.profile_image_url,
       twitter_url: `https://twitter.com/${account.username}`,
-      // AI categorization
-      category: account.ai_category || 'UNCATEGORIZED',
-      confidence: account.ai_confidence || 0,
-      reasoning: account.ai_reasoning || null,
-      categorized_at: account.ai_categorized_at || null,
+      // AI categorization (using ai_ prefix to match frontend)
+      ai_category: account.ai_category || 'UNCATEGORIZED',
+      ai_confidence: account.ai_confidence || 0,
+      ai_reasoning: account.ai_reasoning || null,
+      ai_categorized_at: account.ai_categorized_at || null,
       // Metadata
       has_github: account.has_github,
       created_at: account.created_at,
+      updated_at: account.updated_at,
     }));
 
     res.json({
@@ -90,26 +92,30 @@ router.get('/:id', async (req: Request, res: Response) => {
     // Get recent tweets
     const tweets = await TweetModel.getByAccountId(account.id!, 50);
 
+    // Return { account, tweets } structure to match frontend expectations
     res.json({
-      id: account.id,
-      twitter_id: account.twitter_id,
-      username: account.username,
-      display_name: account.display_name,
-      bio: account.bio,
-      followers_count: account.followers_count,
-      following_count: account.following_count,
-      profile_image_url: account.profile_image_url,
-      twitter_url: `https://twitter.com/${account.username}`,
-      // AI categorization
-      category: account.ai_category || 'UNCATEGORIZED',
-      confidence: account.ai_confidence || 0,
-      reasoning: account.ai_reasoning || null,
-      categorized_at: account.ai_categorized_at || null,
-      // Metadata
-      has_github: account.has_github,
-      created_at: account.created_at,
-      // Tweets
-      recent_tweets: tweets,
+      account: {
+        id: account.id,
+        twitter_id: account.twitter_id,
+        username: account.username,
+        display_name: account.display_name,
+        bio: account.bio,
+        followers_count: account.followers_count,
+        following_count: account.following_count,
+        tweet_count: account.tweet_count || 0,
+        profile_image_url: account.profile_image_url,
+        twitter_url: `https://twitter.com/${account.username}`,
+        // AI categorization (using ai_ prefix to match frontend)
+        ai_category: account.ai_category || 'UNCATEGORIZED',
+        ai_confidence: account.ai_confidence || 0,
+        ai_reasoning: account.ai_reasoning || null,
+        ai_categorized_at: account.ai_categorized_at || null,
+        // Metadata
+        has_github: account.has_github,
+        created_at: account.created_at,
+        updated_at: account.updated_at,
+      },
+      tweets: tweets,
     });
   } catch (error) {
     logger.error('Error getting account:', error);

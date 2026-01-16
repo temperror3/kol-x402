@@ -132,7 +132,7 @@ export default function AccountsList() {
             </select>
           </div>
 
-          <div className="flex-1 min-w-[180px]">
+          {/* <div className="flex-1 min-w-[180px]">
             <label className="block text-sm font-medium text-slate-600 mb-2">Has GitHub</label>
             <select
               value={hasGithub || ''}
@@ -143,7 +143,7 @@ export default function AccountsList() {
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
-          </div>
+          </div> */}
 
           <div className="flex items-end">
             <button
