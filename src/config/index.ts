@@ -42,6 +42,7 @@ export const config = {
     maxPagesPerUser: parseInt(process.env.SEARCH_MAX_PAGES_PER_USER || '3', 10),
     delayMs: parseInt(process.env.SEARCH_DELAY_MS || '2000', 10),
     searchType: process.env.SEARCH_TYPE || 'Top',
+    maxTimelineTweets: parseInt(process.env.MAX_TIMELINE_TWEETS || '50', 10),
   },
 
   // OpenRouter AI
@@ -58,12 +59,13 @@ export const config = {
       minX402Relevance: parseInt(process.env.KOL_MIN_X402_RELEVANCE || '30', 10),
       minX402Tweets30d: parseInt(process.env.KOL_MIN_X402_TWEETS_30D || '3', 10),
     },
-    developer: {
-      minTechScore: parseInt(process.env.DEV_MIN_TECH_SCORE || '50', 10),
-    },
-    activeUser: {
-      minX402Relevance: parseInt(process.env.USER_MIN_X402_RELEVANCE || '20', 10),
-    },
+    // Commented out - focusing on KOL only for now. May be required in future.
+    // developer: {
+    //   minTechScore: parseInt(process.env.DEV_MIN_TECH_SCORE || '50', 10),
+    // },
+    // activeUser: {
+    //   minX402Relevance: parseInt(process.env.USER_MIN_X402_RELEVANCE || '20', 10),
+    // },
   },
 };
 

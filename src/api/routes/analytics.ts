@@ -16,10 +16,11 @@ router.get('/summary', async (_req: Request, res: Response) => {
     const total = Object.values(categoryStats).reduce((sum, count) => sum + count, 0);
 
     // Get top accounts per AI category
-    const [topKOLs, topDevs, topUsers] = await Promise.all([
+    // Note: DEVELOPER and ACTIVE_USER commented out - focusing on KOL only for now
+    const [topKOLs /*, topDevs, topUsers */] = await Promise.all([
       AccountModel.list({ aiCategory: 'KOL' }, 1, 5, 'ai_confidence', 'desc'),
-      AccountModel.list({ aiCategory: 'DEVELOPER' }, 1, 5, 'ai_confidence', 'desc'),
-      AccountModel.list({ aiCategory: 'ACTIVE_USER' }, 1, 5, 'ai_confidence', 'desc'),
+      // AccountModel.list({ aiCategory: 'DEVELOPER' }, 1, 5, 'ai_confidence', 'desc'),
+      // AccountModel.list({ aiCategory: 'ACTIVE_USER' }, 1, 5, 'ai_confidence', 'desc'),
     ]);
 
     res.json({
@@ -27,8 +28,9 @@ router.get('/summary', async (_req: Request, res: Response) => {
       byCategory: categoryStats,
       percentages: {
         KOL: total > 0 ? ((categoryStats.KOL / total) * 100).toFixed(1) : '0',
-        DEVELOPER: total > 0 ? ((categoryStats.DEVELOPER / total) * 100).toFixed(1) : '0',
-        ACTIVE_USER: total > 0 ? ((categoryStats.ACTIVE_USER / total) * 100).toFixed(1) : '0',
+        // Commented out - focusing on KOL only for now. May be required in future.
+        // DEVELOPER: total > 0 ? ((categoryStats.DEVELOPER / total) * 100).toFixed(1) : '0',
+        // ACTIVE_USER: total > 0 ? ((categoryStats.ACTIVE_USER / total) * 100).toFixed(1) : '0',
         UNCATEGORIZED: total > 0 ? ((categoryStats.UNCATEGORIZED / total) * 100).toFixed(1) : '0',
       },
       topAccounts: {
@@ -40,21 +42,22 @@ router.get('/summary', async (_req: Request, res: Response) => {
           reasoning: a.ai_reasoning,
           twitter_url: `https://twitter.com/${a.username}`,
         })),
-        DEVELOPER: topDevs.data.map((a) => ({
-          username: a.username,
-          display_name: a.display_name,
-          confidence: a.ai_confidence,
-          reasoning: a.ai_reasoning,
-          has_github: a.has_github,
-          twitter_url: `https://twitter.com/${a.username}`,
-        })),
-        ACTIVE_USER: topUsers.data.map((a) => ({
-          username: a.username,
-          display_name: a.display_name,
-          confidence: a.ai_confidence,
-          reasoning: a.ai_reasoning,
-          twitter_url: `https://twitter.com/${a.username}`,
-        })),
+        // Commented out - focusing on KOL only for now. May be required in future.
+        // DEVELOPER: topDevs.data.map((a) => ({
+        //   username: a.username,
+        //   display_name: a.display_name,
+        //   confidence: a.ai_confidence,
+        //   reasoning: a.ai_reasoning,
+        //   has_github: a.has_github,
+        //   twitter_url: `https://twitter.com/${a.username}`,
+        // })),
+        // ACTIVE_USER: topUsers.data.map((a) => ({
+        //   username: a.username,
+        //   display_name: a.display_name,
+        //   confidence: a.ai_confidence,
+        //   reasoning: a.ai_reasoning,
+        //   twitter_url: `https://twitter.com/${a.username}`,
+        // })),
       },
     });
   } catch (error) {
@@ -184,10 +187,11 @@ router.get('/confidence-distribution', async (_req: Request, res: Response) => {
 
     // Calculate confidence distribution
     const confidenceBuckets = new Array(10).fill(0);
+    // Note: DEVELOPER and ACTIVE_USER commented out - focusing on KOL only for now
     const byCategory: Record<string, number[]> = {
       KOL: new Array(10).fill(0),
-      DEVELOPER: new Array(10).fill(0),
-      ACTIVE_USER: new Array(10).fill(0),
+      // DEVELOPER: new Array(10).fill(0),
+      // ACTIVE_USER: new Array(10).fill(0),
       UNCATEGORIZED: new Array(10).fill(0),
     };
 
@@ -208,8 +212,9 @@ router.get('/confidence-distribution', async (_req: Request, res: Response) => {
       overall: bucketLabels.map((label, i) => ({ range: label, count: confidenceBuckets[i] })),
       byCategory: {
         KOL: bucketLabels.map((label, i) => ({ range: label, count: byCategory.KOL[i] })),
-        DEVELOPER: bucketLabels.map((label, i) => ({ range: label, count: byCategory.DEVELOPER[i] })),
-        ACTIVE_USER: bucketLabels.map((label, i) => ({ range: label, count: byCategory.ACTIVE_USER[i] })),
+        // Commented out - focusing on KOL only for now. May be required in future.
+        // DEVELOPER: bucketLabels.map((label, i) => ({ range: label, count: byCategory.DEVELOPER[i] })),
+        // ACTIVE_USER: bucketLabels.map((label, i) => ({ range: label, count: byCategory.ACTIVE_USER[i] })),
         UNCATEGORIZED: bucketLabels.map((label, i) => ({ range: label, count: byCategory.UNCATEGORIZED[i] })),
       },
     });
@@ -231,18 +236,19 @@ function getAIOutreachRecommendation(
         action: 'Partner for promotion and awareness campaigns',
         template: `Hi! We noticed your influential content about x402. Would you be interested in a partnership to help spread awareness about HTTP 402 payment protocol?`,
       };
-    case 'DEVELOPER':
-      return {
-        priority: 'high',
-        action: 'Invite to build and host APIs on the platform',
-        template: `Hi! We saw your technical work with x402. We'd love to invite you to our developer program - you could host your APIs and monetize them using the x402 protocol.`,
-      };
-    case 'ACTIVE_USER':
-      return {
-        priority: 'medium',
-        action: 'Invite to try the platform and provide feedback',
-        template: `Hi! We noticed your interest in x402. Would you like early access to try our platform? We'd love your feedback!`,
-      };
+    // Commented out - focusing on KOL only for now. May be required in future.
+    // case 'DEVELOPER':
+    //   return {
+    //     priority: 'high',
+    //     action: 'Invite to build and host APIs on the platform',
+    //     template: `Hi! We saw your technical work with x402. We'd love to invite you to our developer program - you could host your APIs and monetize them using the x402 protocol.`,
+    //   };
+    // case 'ACTIVE_USER':
+    //   return {
+    //     priority: 'medium',
+    //     action: 'Invite to try the platform and provide feedback',
+    //     template: `Hi! We noticed your interest in x402. Would you like early access to try our platform? We'd love your feedback!`,
+    //   };
     default:
       return {
         priority: 'low',

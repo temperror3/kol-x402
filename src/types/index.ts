@@ -110,3 +110,34 @@ export interface AccountFilters {
   minAiConfidence?: number;
   hasGithub?: boolean;
 }
+
+// Red flag types for KOL quality assessment
+export type RedFlagType =
+  | 'company_founder'
+  | 'corporate_account'
+  | 'self_promotion'
+  | 'bot_like_behavior'
+  | 'only_retweets'
+  | 'engagement_farming'
+  | 'low_quality_content'
+  | 'shill_behavior';
+
+export type RedFlagSeverity = 'low' | 'medium' | 'high';
+
+export interface RedFlag {
+  type: RedFlagType;
+  description: string;
+  severity: RedFlagSeverity;
+}
+
+// Enhanced AI categorization result with quality scores
+export interface EnhancedAICategoryResult {
+  category: 'KOL' | 'UNCATEGORIZED';
+  confidence: number;
+  reasoning: string;
+  topicConsistencyScore: number;
+  contentDepthScore: number;
+  topicFocusScore: number;
+  redFlags: RedFlag[];
+  primaryTopics: string[];
+}

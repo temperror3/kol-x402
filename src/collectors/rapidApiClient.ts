@@ -285,3 +285,49 @@ export async function searchUserX402Tweets(
 
   return result.tweets;
 }
+
+// Timeline API response types
+export interface RapidApiTimelineResponse {
+  status: string;
+  timeline: RapidApiTweet[];
+  next_cursor?: string;
+}
+
+/**
+ * Fetch a user's general timeline (recent tweets)
+ * Uses RapidAPI timeline.php endpoint
+ */
+export async function fetchUserTimeline(
+  username: string,
+  maxTweets: number = config.search.maxTimelineTweets
+): Promise<RapidApiTweet[]> {
+  const client = getAxiosClient();
+
+  try {
+    logger.info(`Fetching timeline for @${username} (max: ${maxTweets} tweets)`);
+
+    const response = await client.get<RapidApiTimelineResponse>('/timeline.php', {
+      params: {
+        screenname: username,
+      },
+    });
+
+    if (response.data.status !== 'ok') {
+      throw new Error(`API returned status: ${response.data.status}`);
+    }
+
+    const tweets = response.data.timeline || [];
+    const limitedTweets = tweets.slice(0, maxTweets);
+
+    logger.info(`Fetched ${limitedTweets.length} timeline tweets for @${username}`);
+
+    return limitedTweets;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      logger.error(`RapidAPI timeline error: ${error.response?.status} - ${error.message}`);
+      // Return empty array on error instead of throwing to allow crawl to continue
+      return [];
+    }
+    throw error;
+  }
+}

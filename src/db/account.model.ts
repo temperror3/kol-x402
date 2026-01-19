@@ -171,6 +171,42 @@ export const AccountModel = {
     return true;
   },
 
+  // Update AI categorization with enhanced quality scores
+  async updateAICategoryEnhanced(
+    twitterId: string,
+    data: {
+      ai_category: string;
+      ai_reasoning: string;
+      ai_confidence: number;
+      topic_consistency_score: number;
+      content_depth_score: number;
+      topic_focus_score: number;
+      red_flags: Array<{ type: string; description: string; severity: string }>;
+      primary_topics: string[];
+    }
+  ): Promise<boolean> {
+    const { error } = await supabase
+      .from('accounts')
+      .update({
+        ai_category: data.ai_category,
+        ai_reasoning: data.ai_reasoning,
+        ai_confidence: data.ai_confidence,
+        topic_consistency_score: data.topic_consistency_score,
+        content_depth_score: data.content_depth_score,
+        topic_focus_score: data.topic_focus_score,
+        red_flags: data.red_flags,
+        primary_topics: data.primary_topics,
+        ai_categorized_at: new Date().toISOString(),
+      })
+      .eq('twitter_id', twitterId);
+
+    if (error) {
+      console.error('Error updating enhanced AI category:', error);
+      return false;
+    }
+    return true;
+  },
+
   // Get accounts needing AI categorization (not categorized yet)
   async getUncategorizedAccounts(limit = 100): Promise<Account[]> {
     const { data, error } = await supabase
