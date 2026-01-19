@@ -14,8 +14,8 @@
 import { config, validateConfig } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { runFullDiscovery } from '../collectors/searchCollector.js';
-import { searchUserX402Tweets, delay } from '../collectors/rapidApiClient.js';
-import { categorizeUserWithAI } from '../services/openRouterClient.js';
+import { searchUserX402Tweets, fetchUserTimeline, delay } from '../collectors/rapidApiClient.js';
+import { categorizeUserEnhanced } from '../services/openRouterClient.js';
 import { AccountModel } from '../db/account.model.js';
 
 async function runCrawl(): Promise<void> {
@@ -52,10 +52,11 @@ async function runCrawl(): Promise<void> {
 
     let analyzedCount = 0;
     let skippedCount = 0;
+    // Note: DEVELOPER and ACTIVE_USER commented out - focusing on KOL only for now
     const categoryStats: Record<string, number> = {
       KOL: 0,
-      DEVELOPER: 0,
-      ACTIVE_USER: 0,
+      // DEVELOPER: 0,
+      // ACTIVE_USER: 0,
       UNCATEGORIZED: 0,
     };
 
@@ -71,22 +72,35 @@ async function runCrawl(): Promise<void> {
         // Step 2a: Search for this user's x402 tweets specifically
         logger.info(`\nAnalyzing @${account.username}...`);
 
-        const userTweets = await searchUserX402Tweets(account.username, config.search.maxPagesPerUser);
+        const userX402Tweets = await searchUserX402Tweets(account.username, config.search.maxPagesPerUser);
 
-        // Step 2b: Send to AI for categorization
-        const aiResult = await categorizeUserWithAI(account, userTweets);
+        // Step 2b: Fetch user's general timeline (new)
+        await delay(config.search.delayMs); // Add delay between API calls
+        const generalTimeline = await fetchUserTimeline(account.username, config.search.maxTimelineTweets);
+
+        // Step 2c: Send both to AI for enhanced categorization
+        const aiResult = await categorizeUserEnhanced(account, userX402Tweets, generalTimeline);
         categoryStats[aiResult.category]++;
 
-        // Step 2c: Save AI categorization to database
-        await AccountModel.updateAICategory(account.twitter_id, {
+        // Step 2d: Save enhanced AI categorization to database
+        await AccountModel.updateAICategoryEnhanced(account.twitter_id, {
           ai_category: aiResult.category,
           ai_reasoning: aiResult.reasoning,
           ai_confidence: aiResult.confidence,
+          topic_consistency_score: aiResult.topicConsistencyScore,
+          content_depth_score: aiResult.contentDepthScore,
+          topic_focus_score: aiResult.topicFocusScore,
+          red_flags: aiResult.redFlags,
+          primary_topics: aiResult.primaryTopics,
         });
 
         analyzedCount++;
 
         logger.info(`  Category: ${aiResult.category} (confidence: ${aiResult.confidence.toFixed(2)})`);
+        logger.info(`  Scores: topic=${aiResult.topicConsistencyScore.toFixed(2)}, depth=${aiResult.contentDepthScore.toFixed(2)}, focus=${aiResult.topicFocusScore.toFixed(2)}`);
+        if (aiResult.redFlags.length > 0) {
+          logger.info(`  Red flags: ${aiResult.redFlags.map((f) => `${f.type}(${f.severity})`).join(', ')}`);
+        }
         logger.info(`  Reasoning: ${aiResult.reasoning.substring(0, 100)}...`);
 
         // Progress logging
@@ -113,8 +127,9 @@ async function runCrawl(): Promise<void> {
     logger.info(`Total accounts skipped (already categorized): ${skippedCount}`);
     logger.info('\nAI Category breakdown:');
     logger.info(`  - KOL: ${categoryStats.KOL}`);
-    logger.info(`  - DEVELOPER: ${categoryStats.DEVELOPER}`);
-    logger.info(`  - ACTIVE_USER: ${categoryStats.ACTIVE_USER}`);
+    // Commented out - focusing on KOL only for now. May be required in future.
+    // logger.info(`  - DEVELOPER: ${categoryStats.DEVELOPER}`);
+    // logger.info(`  - ACTIVE_USER: ${categoryStats.ACTIVE_USER}`);
     logger.info(`  - UNCATEGORIZED: ${categoryStats.UNCATEGORIZED}`);
     logger.info('='.repeat(50));
 
@@ -131,15 +146,16 @@ async function runCrawl(): Promise<void> {
       .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
       .slice(0, 5);
 
-    const devAccounts = allAccounts
-      .filter((a) => a.ai_category === 'DEVELOPER')
-      .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
-      .slice(0, 5);
+    // Commented out - focusing on KOL only for now. May be required in future.
+    // const devAccounts = allAccounts
+    //   .filter((a) => a.ai_category === 'DEVELOPER')
+    //   .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
+    //   .slice(0, 5);
 
-    const userAccounts = allAccounts
-      .filter((a) => a.ai_category === 'ACTIVE_USER')
-      .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
-      .slice(0, 5);
+    // const userAccounts = allAccounts
+    //   .filter((a) => a.ai_category === 'ACTIVE_USER')
+    //   .sort((a, b) => (b.ai_confidence || 0) - (a.ai_confidence || 0))
+    //   .slice(0, 5);
 
     if (kolAccounts.length > 0) {
       logger.info('\nTop KOLs:');
@@ -149,21 +165,22 @@ async function runCrawl(): Promise<void> {
       });
     }
 
-    if (devAccounts.length > 0) {
-      logger.info('\nTop Developers:');
-      devAccounts.forEach((acc, i) => {
-        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
-        logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
-      });
-    }
+    // Commented out - focusing on KOL only for now. May be required in future.
+    // if (devAccounts.length > 0) {
+    //   logger.info('\nTop Developers:');
+    //   devAccounts.forEach((acc, i) => {
+    //     logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
+    //     logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
+    //   });
+    // }
 
-    if (userAccounts.length > 0) {
-      logger.info('\nTop Active Users:');
-      userAccounts.forEach((acc, i) => {
-        logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
-        logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
-      });
-    }
+    // if (userAccounts.length > 0) {
+    //   logger.info('\nTop Active Users:');
+    //   userAccounts.forEach((acc, i) => {
+    //     logger.info(`  ${i + 1}. @${acc.username} (confidence: ${acc.ai_confidence?.toFixed(2)})`);
+    //     logger.info(`     Reason: ${acc.ai_reasoning?.substring(0, 80)}...`);
+    //   });
+    // }
 
   } catch (error) {
     logger.error('Crawl failed:', error);
