@@ -1,9 +1,8 @@
 name: Run x402 Crawl
 
 on:
-  # Run on a schedule (daily at 2 AM UTC)
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2 1 1 *'
   # Allow manual triggering from GitHub Actions UI
   workflow_dispatch:
 
