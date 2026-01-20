@@ -140,7 +140,7 @@ export default function Dashboard() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CategoryPieChart data={summary.byCategory} />
-        {confidence && <ConfidenceHistogram data={confidence.overall} />}
+        {confidence && <ConfidenceHistogram data={confidence.overall || []} />}
       </div>
 
       {/* Top Accounts */}
@@ -154,12 +154,12 @@ export default function Dashboard() {
                 <h3 className="text-lg font-semibold text-white">Top KOLs</h3>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/20 rounded-full text-white text-xs font-medium">
                   <StarIcon />
-                  {summary.topAccounts.KOL.length}
+                  {summary.topAccounts.KOL?.length || 0}
                 </span>
               </div>
             </div>
             <div className="p-4 space-y-3">
-              {summary.topAccounts.KOL.map((account, idx) => (
+              {(summary.topAccounts.KOL || []).map((account, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm">
@@ -180,7 +180,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
-              {summary.topAccounts.KOL.length === 0 && (
+              {(!summary.topAccounts.KOL || summary.topAccounts.KOL.length === 0) && (
                 <p className="text-center text-slate-400 py-4">No KOLs found yet</p>
               )}
             </div>
@@ -201,12 +201,12 @@ export default function Dashboard() {
                 <h3 className="text-lg font-semibold text-white">Top Developers</h3>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/20 rounded-full text-white text-xs font-medium">
                   <CodeIcon />
-                  {summary.topAccounts.DEVELOPER.length}
+                  {summary.topAccounts.DEVELOPER?.length || 0}
                 </span>
               </div>
             </div>
             <div className="p-4 space-y-3">
-              {summary.topAccounts.DEVELOPER.map((account, idx) => (
+              {(summary.topAccounts.DEVELOPER || []).map((account, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm">
@@ -227,7 +227,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
-              {summary.topAccounts.DEVELOPER.length === 0 && (
+              {(!summary.topAccounts.DEVELOPER || summary.topAccounts.DEVELOPER.length === 0) && (
                 <p className="text-center text-slate-400 py-4">No developers found yet</p>
               )}
             </div>
@@ -248,12 +248,12 @@ export default function Dashboard() {
                 <h3 className="text-lg font-semibold text-white">Top Active Users</h3>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/20 rounded-full text-white text-xs font-medium">
                   <UserIcon />
-                  {summary.topAccounts.ACTIVE_USER.length}
+                  {summary.topAccounts.ACTIVE_USER?.length || 0}
                 </span>
               </div>
             </div>
             <div className="p-4 space-y-3">
-              {summary.topAccounts.ACTIVE_USER.map((account, idx) => (
+              {(summary.topAccounts.ACTIVE_USER || []).map((account, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold text-sm">
@@ -271,7 +271,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
-              {summary.topAccounts.ACTIVE_USER.length === 0 && (
+              {(!summary.topAccounts.ACTIVE_USER || summary.topAccounts.ACTIVE_USER.length === 0) && (
                 <p className="text-center text-slate-400 py-4">No active users found yet</p>
               )}
             </div>

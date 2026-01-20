@@ -160,7 +160,7 @@ export default function Analytics() {
       {/* Main Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CategoryPieChart data={summary.byCategory} />
-        <ConfidenceHistogram data={confidence.overall} title="Overall Confidence Distribution" />
+        <ConfidenceHistogram data={confidence.overall || []} title="Overall Confidence Distribution" />
       </div>
 
       {/* Per-Category Confidence */}
@@ -177,7 +177,7 @@ export default function Analytics() {
           {(['KOL', 'DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED'] as const).map((cat) => (
             <ConfidenceHistogram
               key={cat}
-              data={confidence.byCategory[cat]}
+              data={confidence.byCategory[cat] || []}
               title={cat === 'UNCATEGORIZED' ? 'Uncategorized' : cat}
               color={CATEGORY_COLORS[cat]}
             />
