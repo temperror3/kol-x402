@@ -130,6 +130,49 @@ Respond ONLY with valid JSON:
   "primaryTopics": ["topic1", "topic2"]
 }`;
 
+const SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
+
+x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+
+IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
+Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
+
+## Category Definitions
+
+### DEVELOPER
+Personal account showing clear evidence of building or contributing to software.
+Strong signals include:
+- Code snippets, technical threads, build logs, or architecture discussions
+- GitHub links, repos, PRs, SDKs, APIs, open-source contributions
+- Role signals like "engineer", "developer", "builder", "infra", "backend"
+
+### ACTIVE_USER
+Non-developer who actively uses or experiments with x402/crypto payment APIs.
+Signals include:
+- Describing real usage, integrations, demos, or feedback
+- Asking/answering practical questions about using the protocol
+- Sharing results, learnings, or issues from using x402/related APIs
+- Active users is not a company founder or the CEO
+
+### UNCATEGORIZED
+Use when there is insufficient evidence, or the account is:
+- A company/brand/official account
+- Purely promotional, marketing, or hype-driven
+- Mostly memes/retweets/engagement farming
+- Not clearly related to x402 or crypto payments usage/building
+
+Decision rules:
+- Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
+- Require at least 2 concrete signals; otherwise choose UNCATEGORIZED.
+- When in doubt, choose UNCATEGORIZED.
+
+Respond ONLY with valid JSON:
+{
+  "category": "DEVELOPER" | "ACTIVE_USER" | "UNCATEGORIZED",
+  "confidence": 0.0-1.0,
+  "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
+}`;
+
 function formatTweets(tweets: RapidApiTweet[]): string {
   return tweets
     .map((tweet, index) => {
@@ -361,6 +404,38 @@ Based on the CONTENT QUALITY (not engagement metrics), evaluate this user's qual
 }
 
 /**
+ * Build prompt for secondary categorization (developer vs active user)
+ */
+function buildSecondaryUserPrompt(
+  account: Account,
+  x402Tweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[]
+): string {
+  const x402Formatted = formatTweetsEnhanced(x402Tweets);
+  const generalFormatted = formatTweetsEnhanced(generalTweets);
+
+  return `Analyze this user's activity to classify them as DEVELOPER, ACTIVE_USER, or UNCATEGORIZED:
+
+**Username:** @${account.username}
+**Display Name:** ${account.display_name}
+**Bio:** ${account.bio || 'No bio'}
+**Followers:** ${account.followers_count.toLocaleString()}
+**Following:** ${account.following_count.toLocaleString()}
+**Has GitHub in bio:** ${account.has_github ? 'Yes' : 'No'}
+
+---
+**x402-RELATED TWEETS (${x402Tweets.length} tweets):**
+${x402Formatted || 'No x402 tweets found'}
+
+---
+**GENERAL TIMELINE (${generalTweets.length} recent tweets):**
+${generalFormatted || 'No timeline tweets available'}
+
+---
+Use the evidence above to choose the best category.`;
+}
+
+/**
  * Parse enhanced AI response with quality scores and red flags
  */
 function parseEnhancedAIResponse(content: string): EnhancedAICategoryResult {
@@ -454,6 +529,47 @@ function parseEnhancedAIResponse(content: string): EnhancedAICategoryResult {
 }
 
 /**
+ * Parse AI response for secondary categorization (developer vs active user)
+ */
+function parseSecondaryAIResponse(content: string): AICategoryResult {
+  try {
+    // Try to extract JSON from the response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON found in response');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const validCategories = ['DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED'];
+    if (!validCategories.includes(parsed.category)) {
+      parsed.category = 'UNCATEGORIZED';
+    }
+
+    if (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) {
+      parsed.confidence = 0.5;
+    }
+
+    if (typeof parsed.reasoning !== 'string') {
+      parsed.reasoning = 'No reasoning provided';
+    }
+
+    return {
+      category: parsed.category,
+      confidence: parsed.confidence,
+      reasoning: parsed.reasoning,
+    };
+  } catch (error) {
+    logger.error('Failed to parse secondary AI response:', error);
+    return {
+      category: 'UNCATEGORIZED',
+      confidence: 0,
+      reasoning: 'Failed to parse AI response',
+    };
+  }
+}
+
+/**
  * Enhanced user categorization based on content quality
  * Uses both x402 tweets and general timeline for holistic analysis
  */
@@ -529,6 +645,69 @@ export async function categorizeUserEnhanced(
       topicFocusScore: 0,
       redFlags: [],
       primaryTopics: [],
+    };
+  }
+}
+
+/**
+ * Secondary categorization for previously-uncategorized accounts
+ * Determines DEVELOPER vs ACTIVE_USER vs UNCATEGORIZED
+ */
+export async function categorizeUserForSecondaryCategories(
+  account: Account,
+  x402Tweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[]
+): Promise<AICategoryResult> {
+  const client = getClient();
+
+  if (x402Tweets.length === 0 && generalTweets.length === 0) {
+    return {
+      category: 'UNCATEGORIZED',
+      confidence: 0,
+      reasoning: 'No tweets available for analysis',
+    };
+  }
+
+  const userPrompt = buildSecondaryUserPrompt(account, x402Tweets, generalTweets);
+
+  try {
+    logger.info(
+      `Secondary categorizing @${account.username} (${x402Tweets.length} x402 tweets, ${generalTweets.length} timeline tweets)`
+    );
+
+    const stream = await client.chat.send({
+      model: config.openRouter.model,
+      messages: [
+        { role: 'system', content: SECONDARY_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      stream: true,
+      streamOptions: {
+        includeUsage: true,
+      },
+    });
+
+    let response = '';
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        response += content;
+      }
+    }
+
+    const result = parseSecondaryAIResponse(response);
+
+    logger.info(
+      `Secondary AI categorized @${account.username} as ${result.category} (confidence: ${result.confidence})`
+    );
+
+    return result;
+  } catch (error) {
+    logger.error(`Error secondary categorizing @${account.username} with AI:`, error);
+    return {
+      category: 'UNCATEGORIZED',
+      confidence: 0,
+      reasoning: `AI categorization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     };
   }
 }
