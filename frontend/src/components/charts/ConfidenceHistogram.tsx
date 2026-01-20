@@ -11,7 +11,8 @@ export default function ConfidenceHistogram({
   title = 'Confidence Distribution',
   color = '#6366f1',
 }: ConfidenceHistogramProps) {
-  const total = data.reduce((sum, item) => sum + item.count, 0);
+  const safeData = data || [];
+  const total = safeData.reduce((sum, item) => sum + item.count, 0);
 
   return (
     <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
@@ -25,7 +26,7 @@ export default function ConfidenceHistogram({
         </div>
       </div>
       <ResponsiveContainer width="100%" height={280}>
-        <BarChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+        <BarChart data={safeData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
           <XAxis
             dataKey="range"
