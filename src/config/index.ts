@@ -45,6 +45,26 @@ export const config = {
     maxTimelineTweets: parseInt(process.env.MAX_TIMELINE_TWEETS || '50', 10),
   },
 
+  // Batch processing settings for improved performance
+  batch: {
+    // Number of users to fetch data for in parallel
+    dataFetchConcurrency: parseInt(process.env.BATCH_DATA_FETCH_CONCURRENCY || '3', 10),
+    // Number of users to process in a single data fetch batch
+    dataFetchBatchSize: parseInt(process.env.BATCH_DATA_FETCH_SIZE || '10', 10),
+    // Delay between data fetch batches (ms)
+    dataFetchBatchDelay: parseInt(process.env.BATCH_DATA_FETCH_DELAY || '5000', 10),
+    // Number of users to categorize in a single AI request
+    aiCategorizationBatchSize: parseInt(process.env.BATCH_AI_CATEGORIZATION_SIZE || '5', 10),
+    // Number of categorization results to save in a single database batch
+    dbUpdateBatchSize: parseInt(process.env.BATCH_DB_UPDATE_SIZE || '50', 10),
+    // Enable parallel processing (set to false to use legacy sequential mode)
+    enableParallelProcessing: process.env.BATCH_ENABLE_PARALLEL !== 'false',
+    // Number of retries for failed AI batches
+    aiRetryCount: parseInt(process.env.BATCH_AI_RETRY_COUNT || '3', 10),
+    // Delay between retries (ms)
+    aiRetryDelay: parseInt(process.env.BATCH_AI_RETRY_DELAY || '2000', 10),
+  },
+
   // OpenRouter AI
   openRouter: {
     apiKey: process.env.OPENROUTER_API_KEY || '',

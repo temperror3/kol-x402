@@ -331,3 +331,203 @@ export async function fetchUserTimeline(
     throw error;
   }
 }
+
+/**
+ * User data result type for batch fetching
+ */
+export interface UserTweetData {
+  username: string;
+  x402Tweets: RapidApiTweet[];
+  generalTweets: RapidApiTweet[];
+  error?: string;
+}
+
+/**
+ * Simple concurrency limiter for parallel operations
+ */
+class ConcurrencyLimiter {
+  private running = 0;
+  private queue: Array<() => void> = [];
+
+  constructor(private maxConcurrent: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.running < this.maxConcurrent) {
+      this.running++;
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.running++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.running--;
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    }
+  }
+}
+
+/**
+ * Fetch user data (x402 tweets + timeline) for a single user
+ * Internal helper function
+ */
+async function fetchUserData(
+  username: string,
+  maxPagesPerUser: number,
+  maxTimelineTweets: number,
+  delayMs: number
+): Promise<UserTweetData> {
+  try {
+    // Fetch x402 tweets
+    const x402Tweets = await searchUserX402Tweets(username, maxPagesPerUser, delayMs);
+
+    // Add delay between API calls to avoid rate limits
+    await delay(delayMs);
+
+    // Fetch general timeline
+    const generalTweets = await fetchUserTimeline(username, maxTimelineTweets);
+
+    return {
+      username,
+      x402Tweets,
+      generalTweets,
+    };
+  } catch (error) {
+    logger.error(`Error fetching data for @${username}:`, error);
+    return {
+      username,
+      x402Tweets: [],
+      generalTweets: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Fetch user data for multiple users in parallel with concurrency control
+ * This is much faster than sequential fetching while respecting rate limits
+ *
+ * @param usernames Array of usernames to fetch data for
+ * @param options Configuration options
+ * @returns Array of user tweet data
+ */
+export async function fetchUserDataBatch(
+  usernames: string[],
+  options: {
+    maxConcurrent?: number;
+    maxPagesPerUser?: number;
+    maxTimelineTweets?: number;
+    delayMs?: number;
+    onProgress?: (completed: number, total: number) => void;
+  } = {}
+): Promise<UserTweetData[]> {
+  const {
+    maxConcurrent = 3,
+    maxPagesPerUser = config.search.maxPagesPerUser,
+    maxTimelineTweets = config.search.maxTimelineTweets,
+    delayMs = config.search.delayMs,
+    onProgress,
+  } = options;
+
+  const limiter = new ConcurrencyLimiter(maxConcurrent);
+  const results: UserTweetData[] = [];
+  let completed = 0;
+
+  logger.info(`Fetching data for ${usernames.length} users (concurrency: ${maxConcurrent})`);
+
+  const fetchPromises = usernames.map(async (username) => {
+    await limiter.acquire();
+    try {
+      const result = await fetchUserData(username, maxPagesPerUser, maxTimelineTweets, delayMs);
+      completed++;
+      if (onProgress) {
+        onProgress(completed, usernames.length);
+      }
+      return result;
+    } finally {
+      limiter.release();
+    }
+  });
+
+  const allResults = await Promise.all(fetchPromises);
+
+  logger.info(`Completed fetching data for ${usernames.length} users`);
+
+  return allResults;
+}
+
+/**
+ * Fetch user data for multiple users with rate limiting and batching
+ * Processes users in configurable batch sizes with delays between batches
+ *
+ * @param usernames Array of usernames to fetch data for
+ * @param options Configuration options
+ * @returns Array of user tweet data
+ */
+export async function fetchUserDataBatched(
+  usernames: string[],
+  options: {
+    batchSize?: number;
+    maxConcurrentPerBatch?: number;
+    maxPagesPerUser?: number;
+    maxTimelineTweets?: number;
+    delayMs?: number;
+    delayBetweenBatches?: number;
+    onBatchComplete?: (batchNum: number, totalBatches: number, results: UserTweetData[]) => void;
+  } = {}
+): Promise<UserTweetData[]> {
+  const {
+    batchSize = 10,
+    maxConcurrentPerBatch = 3,
+    maxPagesPerUser = config.search.maxPagesPerUser,
+    maxTimelineTweets = config.search.maxTimelineTweets,
+    delayMs = config.search.delayMs,
+    delayBetweenBatches = 5000,
+    onBatchComplete,
+  } = options;
+
+  const allResults: UserTweetData[] = [];
+  const totalBatches = Math.ceil(usernames.length / batchSize);
+
+  logger.info(
+    `Processing ${usernames.length} users in ${totalBatches} batches ` +
+    `(batch size: ${batchSize}, concurrency: ${maxConcurrentPerBatch})`
+  );
+
+  for (let i = 0; i < usernames.length; i += batchSize) {
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const batchUsernames = usernames.slice(i, i + batchSize);
+
+    logger.info(`Processing batch ${batchNum}/${totalBatches} (${batchUsernames.length} users)`);
+
+    const batchResults = await fetchUserDataBatch(batchUsernames, {
+      maxConcurrent: maxConcurrentPerBatch,
+      maxPagesPerUser,
+      maxTimelineTweets,
+      delayMs,
+    });
+
+    allResults.push(...batchResults);
+
+    if (onBatchComplete) {
+      onBatchComplete(batchNum, totalBatches, batchResults);
+    }
+
+    // Add delay between batches to avoid overwhelming the API
+    if (i + batchSize < usernames.length) {
+      logger.info(`Waiting ${delayBetweenBatches}ms before next batch...`);
+      await delay(delayBetweenBatches);
+    }
+  }
+
+  logger.info(`Completed processing all ${usernames.length} users`);
+
+  return allResults;
+}

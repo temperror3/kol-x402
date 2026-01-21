@@ -221,6 +221,74 @@ export const AccountModel = {
     }
     return data || [];
   },
+
+  // Bulk update AI categorization with enhanced quality scores
+  async bulkUpdateAICategoryEnhanced(
+    updates: Array<{
+      twitter_id: string;
+      ai_category: string;
+      ai_reasoning: string;
+      ai_confidence: number;
+      topic_consistency_score: number;
+      content_depth_score: number;
+      topic_focus_score: number;
+      red_flags: Array<{ type: string; description: string; severity: string }>;
+      primary_topics: string[];
+    }>
+  ): Promise<{ success: number; failed: number }> {
+    const now = new Date().toISOString();
+    let success = 0;
+    let failed = 0;
+
+    // Process in batches to avoid overwhelming the database
+    const batchSize = 50;
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize);
+
+      // Use Promise.all for parallel updates within each batch
+      const results = await Promise.all(
+        batch.map(async (update) => {
+          const { error } = await supabase
+            .from('accounts')
+            .update({
+              ai_category: update.ai_category,
+              ai_reasoning: update.ai_reasoning,
+              ai_confidence: update.ai_confidence,
+              topic_consistency_score: update.topic_consistency_score,
+              content_depth_score: update.content_depth_score,
+              topic_focus_score: update.topic_focus_score,
+              red_flags: update.red_flags,
+              primary_topics: update.primary_topics,
+              ai_categorized_at: now,
+            })
+            .eq('twitter_id', update.twitter_id);
+
+          return error ? 'failed' : 'success';
+        })
+      );
+
+      success += results.filter((r) => r === 'success').length;
+      failed += results.filter((r) => r === 'failed').length;
+    }
+
+    return { success, failed };
+  },
+
+  // Get accounts by usernames
+  async getByUsernames(usernames: string[]): Promise<Account[]> {
+    if (usernames.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from('accounts')
+      .select('*')
+      .in('username', usernames);
+
+    if (error) {
+      console.error('Error getting accounts by usernames:', error);
+      return [];
+    }
+    return data || [];
+  },
 };
 
 export const TweetModel = {
