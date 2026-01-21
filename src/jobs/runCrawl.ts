@@ -51,9 +51,9 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 
   for (const account of accounts) {
     try {
-      // Skip users that already have AI categorization
-      if (account.ai_category && account.ai_categorized_at) {
-        logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category}`);
+      // Skip users that already have AI categorization (either category or timestamp set)
+      if (account.ai_category || account.ai_categorized_at) {
+        logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category || 'pending'}`);
         skippedCount++;
         continue;
       }
@@ -116,10 +116,10 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     UNCATEGORIZED: 0,
   };
 
-  // Filter out already categorized accounts
+  // Filter out already categorized accounts (skip if EITHER category OR timestamp is set)
   const uncategorizedAccounts = accounts.filter((account) => {
-    if (account.ai_category && account.ai_categorized_at) {
-      logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category}`);
+    if (account.ai_category || account.ai_categorized_at) {
+      logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category || 'pending'}`);
       return false;
     }
     return true;
