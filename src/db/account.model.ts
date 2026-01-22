@@ -111,29 +111,38 @@ export const AccountModel = {
 
   // Get AI category stats
   async getAICategoryStats(): Promise<Record<string, number>> {
-    const { data, error } = await supabase.from('accounts').select('ai_category');
+    // Use separate count queries for each category to avoid Supabase's default 1000 row limit
+    // Get total count and categorized counts, then calculate UNCATEGORIZED as the difference
+    const [totalResult, kolResult, devResult, activeUserResult] = await Promise.all([
+      supabase.from('accounts').select('*', { count: 'exact', head: true }),
+      supabase.from('accounts').select('*', { count: 'exact', head: true }).eq('ai_category', 'KOL'),
+      supabase.from('accounts').select('*', { count: 'exact', head: true }).eq('ai_category', 'DEVELOPER'),
+      supabase.from('accounts').select('*', { count: 'exact', head: true }).eq('ai_category', 'ACTIVE_USER'),
+    ]);
 
-    if (error) {
-      console.error('Error getting AI category stats:', error);
-      return {};
+    if (totalResult.error || kolResult.error || devResult.error || activeUserResult.error) {
+      console.error('Error getting AI category stats:', {
+        total: totalResult.error,
+        kol: kolResult.error,
+        dev: devResult.error,
+        activeUser: activeUserResult.error,
+      });
+      return { KOL: 0, DEVELOPER: 0, ACTIVE_USER: 0, UNCATEGORIZED: 0 };
     }
 
-    const stats: Record<string, number> = {
-      KOL: 0,
-      DEVELOPER: 0,
-      ACTIVE_USER: 0,
-      UNCATEGORIZED: 0,
+    const total = totalResult.count || 0;
+    const kol = kolResult.count || 0;
+    const developer = devResult.count || 0;
+    const activeUser = activeUserResult.count || 0;
+    // UNCATEGORIZED includes all accounts not in the three main categories (NULL, empty string, or any other value)
+    const uncategorized = total - kol - developer - activeUser;
+
+    return {
+      KOL: kol,
+      DEVELOPER: developer,
+      ACTIVE_USER: activeUser,
+      UNCATEGORIZED: uncategorized,
     };
-
-    data?.forEach((row) => {
-      if (row.ai_category && row.ai_category in stats) {
-        stats[row.ai_category]++;
-      } else if (!row.ai_category) {
-        stats.UNCATEGORIZED++;
-      }
-    });
-
-    return stats;
   },
 
   // Delete account
@@ -288,6 +297,48 @@ export const AccountModel = {
       return [];
     }
     return data || [];
+  },
+
+  // Bulk update AI categorization (for secondary categorization)
+  async bulkUpdateAICategorization(
+    updates: Array<{
+      twitter_id: string;
+      ai_category: string;
+      ai_reasoning: string;
+      ai_confidence: number;
+    }>
+  ): Promise<{ success: number; failed: number }> {
+    const now = new Date().toISOString();
+    let success = 0;
+    let failed = 0;
+
+    // Process in batches to avoid overwhelming the database
+    const batchSize = 50;
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize);
+
+      // Use Promise.all for parallel updates within each batch
+      const results = await Promise.all(
+        batch.map(async (update) => {
+          const { error } = await supabase
+            .from('accounts')
+            .update({
+              ai_category: update.ai_category,
+              ai_reasoning: update.ai_reasoning,
+              ai_confidence: update.ai_confidence,
+              ai_categorized_at: now,
+            })
+            .eq('twitter_id', update.twitter_id);
+
+          return error ? 'failed' : 'success';
+        })
+      );
+
+      success += results.filter((r) => r === 'success').length;
+      failed += results.filter((r) => r === 'failed').length;
+    }
+
+    return { success, failed };
   },
 };
 
