@@ -733,6 +733,325 @@ export interface BatchCategorizationResult {
   error?: string;
 }
 
+/**
+ * Secondary batch categorization result type
+ */
+export interface SecondaryBatchCategorizationResult {
+  account: Account;
+  result: AICategoryResult;
+  error?: string;
+}
+
+const BATCH_SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
+
+x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+
+IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
+Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
+
+## Category Definitions
+
+### DEVELOPER
+Personal account showing clear evidence of building or contributing to software.
+Strong signals include:
+- Code snippets, technical threads, build logs, or architecture discussions
+- GitHub links, repos, PRs, SDKs, APIs, open-source contributions
+- Role signals like "engineer", "developer", "builder", "infra", "backend"
+
+### ACTIVE_USER
+Non-developer who actively uses or experiments with x402/crypto payment APIs.
+Signals include:
+- Describing real usage, integrations, demos, or feedback
+- Asking/answering practical questions about using the protocol
+- Sharing results, learnings, or issues from using x402/related APIs
+- Active users is not a company founder or the CEO
+
+### UNCATEGORIZED
+Use when there is insufficient evidence, or the account is:
+- A company/brand/official account
+- Purely promotional, marketing, or hype-driven
+- Mostly memes/retweets/engagement farming
+- Not clearly related to x402 or crypto payments usage/building
+
+Decision rules:
+- Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
+- Require at least 2 concrete signals; otherwise choose UNCATEGORIZED.
+- When in doubt, choose UNCATEGORIZED.
+
+You will receive multiple users to analyze in a single request. Analyze each user independently and return a JSON array with results for each user.
+
+Respond ONLY with a valid JSON array:
+[
+  {
+    "username": "@username",
+    "category": "DEVELOPER" | "ACTIVE_USER" | "UNCATEGORIZED",
+    "confidence": 0.0-1.0,
+    "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
+  }
+]`;
+
+/**
+ * Build batch user prompt for secondary categorization
+ */
+function buildBatchSecondaryUserPrompt(inputs: BatchCategorizationInput[]): string {
+  const usersData = inputs.map((input, index) => {
+    const { account, x402Tweets, generalTweets } = input;
+    const x402Formatted = formatTweetsEnhanced(x402Tweets);
+    const generalFormatted = formatTweetsEnhanced(generalTweets);
+
+    return `
+=== USER ${index + 1}: @${account.username} ===
+**Display Name:** ${account.display_name}
+**Bio:** ${account.bio || 'No bio'}
+**Followers:** ${account.followers_count?.toLocaleString() || 0}
+**Has GitHub in bio:** ${account.has_github ? 'Yes' : 'No'}
+
+**x402-RELATED TWEETS (${x402Tweets?.length || 0} tweets):**
+${x402Formatted || 'No x402 tweets found'}
+
+**GENERAL TIMELINE (${generalTweets?.length || 0} recent tweets):**
+${generalFormatted || 'No timeline tweets available'}
+`;
+  });
+
+  return `Analyze the following ${inputs.length} Twitter users to classify them as DEVELOPER, ACTIVE_USER, or UNCATEGORIZED. Return a JSON array with analysis for each user.
+
+${usersData.join('\n---\n')}
+
+Use the evidence above to choose the best category for each user. Return exactly ${inputs.length} results in the same order.`;
+}
+
+/**
+ * Parse batch secondary AI response
+ */
+function parseBatchSecondaryAIResponse(content: string): Map<string, AICategoryResult> {
+  const results = new Map<string, AICategoryResult>();
+
+  try {
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      throw new Error('No JSON array found in response');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('Response is not an array');
+    }
+
+    for (const item of parsed) {
+      const username = (item.username || '').replace('@', '').toLowerCase();
+
+      const validCategories = ['DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED'];
+      let category = validCategories.includes(item.category) ? item.category : 'UNCATEGORIZED';
+
+      let confidence = 0.5;
+      if (typeof item.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1) {
+        confidence = item.confidence;
+      }
+
+      const reasoning = typeof item.reasoning === 'string' ? item.reasoning : 'No reasoning provided';
+
+      results.set(username, {
+        category,
+        confidence,
+        reasoning,
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to parse batch secondary AI response:', error);
+  }
+
+  return results;
+}
+
+/**
+ * Process a single secondary batch with retry logic
+ */
+async function processSecondaryBatchWithRetry(
+  client: OpenRouter,
+  usersWithTweets: BatchCategorizationInput[],
+  batchNumber: number,
+  maxRetries: number = 3,
+  retryDelay: number = 2000
+): Promise<SecondaryBatchCategorizationResult[]> {
+  const results: SecondaryBatchCategorizationResult[] = [];
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      logger.info(`Secondary batch categorizing ${usersWithTweets.length} users (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
+
+      const userPrompt = buildBatchSecondaryUserPrompt(usersWithTweets);
+
+      const stream = await client.chat.send({
+        model: config.openRouter.model,
+        messages: [
+          { role: 'system', content: BATCH_SECONDARY_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        stream: true,
+        streamOptions: {
+          includeUsage: true,
+        },
+      });
+
+      let response = '';
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) {
+          response += content;
+        }
+      }
+
+      const parsedResults = parseBatchSecondaryAIResponse(response);
+
+      let allParsedSuccessfully = true;
+      const batchResults: SecondaryBatchCategorizationResult[] = [];
+
+      for (const input of usersWithTweets) {
+        const username = input.account.username.toLowerCase();
+        const result = parsedResults.get(username);
+
+        if (result) {
+          batchResults.push({
+            account: input.account,
+            result,
+          });
+          logger.info(
+            `Secondary batch AI categorized @${input.account.username} as ${result.category} (confidence: ${result.confidence.toFixed(2)})`
+          );
+        } else {
+          allParsedSuccessfully = false;
+          logger.warn(`No result found for @${input.account.username} in secondary batch response`);
+        }
+      }
+
+      if (allParsedSuccessfully) {
+        return batchResults;
+      }
+
+      if (attempt === maxRetries) {
+        logger.warn(`Some users missing from secondary AI response after ${maxRetries} attempts, using fallbacks`);
+        for (const input of usersWithTweets) {
+          const username = input.account.username.toLowerCase();
+          const result = parsedResults.get(username);
+
+          if (result) {
+            results.push({
+              account: input.account,
+              result,
+            });
+          } else {
+            results.push({
+              account: input.account,
+              result: {
+                category: 'UNCATEGORIZED',
+                confidence: 0,
+                reasoning: 'Failed to parse batch AI response for this user after retries',
+              },
+              error: 'Result not found in batch response after retries',
+            });
+          }
+        }
+        return results;
+      }
+
+      logger.info(`Retrying secondary batch ${batchNumber} due to incomplete results...`);
+      await delay(retryDelay * attempt);
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      logger.error(`Error in secondary batch ${batchNumber} (attempt ${attempt}/${maxRetries}):`, lastError.message);
+
+      if (attempt < maxRetries) {
+        logger.info(`Retrying secondary batch ${batchNumber} in ${retryDelay * attempt}ms...`);
+        await delay(retryDelay * attempt);
+      }
+    }
+  }
+
+  logger.error(`Secondary batch ${batchNumber} failed after ${maxRetries} attempts`);
+  for (const input of usersWithTweets) {
+    results.push({
+      account: input.account,
+      result: {
+        category: 'UNCATEGORIZED',
+        confidence: 0,
+        reasoning: `AI categorization failed after ${maxRetries} retries: ${lastError?.message || 'Unknown error'}`,
+      },
+      error: lastError?.message || 'Unknown error',
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Batch categorize multiple users for secondary categories (DEVELOPER, ACTIVE_USER, UNCATEGORIZED)
+ * Includes retry logic for failed batches
+ *
+ * @param inputs Array of accounts with their tweets
+ * @param maxBatchSize Maximum number of users to process in a single AI request (default: 5)
+ * @param maxRetries Maximum number of retries for failed batches (default: 3)
+ * @param retryDelay Base delay between retries in ms (default: 2000)
+ * @returns Array of categorization results
+ */
+export async function categorizeUsersSecondaryBatch(
+  inputs: BatchCategorizationInput[],
+  maxBatchSize: number = 5,
+  maxRetries: number = config.batch.aiRetryCount,
+  retryDelay: number = config.batch.aiRetryDelay
+): Promise<SecondaryBatchCategorizationResult[]> {
+  const client = getClient();
+  const allResults: SecondaryBatchCategorizationResult[] = [];
+
+  for (let i = 0; i < inputs.length; i += maxBatchSize) {
+    const batch = inputs.slice(i, i + maxBatchSize);
+    const batchNumber = Math.floor(i / maxBatchSize) + 1;
+
+    const usersWithTweets: BatchCategorizationInput[] = [];
+    const usersWithoutTweets: BatchCategorizationInput[] = [];
+
+    for (const input of batch) {
+      const x402Tweets = input.x402Tweets || [];
+      const generalTweets = input.generalTweets || [];
+      if (x402Tweets.length === 0 && generalTweets.length === 0) {
+        usersWithoutTweets.push(input);
+      } else {
+        usersWithTweets.push(input);
+      }
+    }
+
+    for (const input of usersWithoutTweets) {
+      allResults.push({
+        account: input.account,
+        result: {
+          category: 'UNCATEGORIZED',
+          confidence: 0,
+          reasoning: 'No tweets available for analysis',
+        },
+      });
+    }
+
+    if (usersWithTweets.length === 0) {
+      continue;
+    }
+
+    const batchResults = await processSecondaryBatchWithRetry(
+      client,
+      usersWithTweets,
+      batchNumber,
+      maxRetries,
+      retryDelay
+    );
+
+    allResults.push(...batchResults);
+  }
+
+  return allResults;
+}
+
 const BATCH_SYSTEM_PROMPT = `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
 
 x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
