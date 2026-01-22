@@ -72,15 +72,6 @@ router.get('/export', async (req: Request, res: Response) => {
     const category = req.query.category as Category | undefined;
     const minConfidence = parseFloat(req.query.minConfidence as string) || 0;
 
-    // Get all accounts matching filters
-    const result = await AccountModel.list(
-      { aiCategory: category, minAiConfidence: minConfidence },
-      1,
-      10000, // Get all
-      'ai_confidence',
-      'desc'
-    );
-
     // Generate CSV with AI fields
     const headers = [
       'username',
@@ -95,20 +86,41 @@ router.get('/export', async (req: Request, res: Response) => {
       'bio',
     ];
 
-    const rows = result.data.map((account) => [
-      account.username,
-      `"${(account.display_name || '').replace(/"/g, '""')}"`,
-      `https://twitter.com/${account.username}`,
-      account.ai_category || 'UNCATEGORIZED',
-      account.ai_confidence || 0,
-      `"${(account.ai_reasoning || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-      account.followers_count,
-      account.has_github,
-      account.ai_categorized_at || '',
-      `"${(account.bio || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-    ]);
+    const allRows: string[][] = [];
 
-    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+    // Paginate through all accounts to avoid Supabase's default row limit
+    const pageSize = 1000;
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await AccountModel.list(
+        { aiCategory: category, minAiConfidence: minConfidence },
+        page,
+        pageSize,
+        'ai_confidence',
+        'desc'
+      );
+
+      const rows = result.data.map((account) => [
+        account.username,
+        `"${(account.display_name || '').replace(/"/g, '""')}"`,
+        `https://twitter.com/${account.username}`,
+        account.ai_category || 'UNCATEGORIZED',
+        String(account.ai_confidence || 0),
+        `"${(account.ai_reasoning || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+        String(account.followers_count),
+        String(account.has_github),
+        account.ai_categorized_at || '',
+        `"${(account.bio || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+      ]);
+
+      allRows.push(...rows);
+      hasMore = page < result.pagination.totalPages;
+      page++;
+    }
+
+    const csv = [headers.join(','), ...allRows.map((row) => row.join(','))].join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
@@ -179,12 +191,8 @@ router.get('/outreach', async (req: Request, res: Response) => {
  */
 router.get('/confidence-distribution', async (_req: Request, res: Response) => {
   try {
-    // Get all accounts
-    const result = await AccountModel.list({}, 1, 10000, 'ai_confidence', 'desc');
-
     // Calculate confidence distribution
     const confidenceBuckets = new Array(10).fill(0);
-    // Note: DEVELOPER and ACTIVE_USER commented out - focusing on KOL only for now
     const byCategory: Record<string, number[]> = {
       KOL: new Array(10).fill(0),
       DEVELOPER: new Array(10).fill(0),
@@ -192,16 +200,28 @@ router.get('/confidence-distribution', async (_req: Request, res: Response) => {
       UNCATEGORIZED: new Array(10).fill(0),
     };
 
-    result.data.forEach((account) => {
-      const confidence = account.ai_confidence || 0;
-      const confIdx = Math.min(Math.floor(confidence * 10), 9);
-      confidenceBuckets[confIdx]++;
+    // Paginate through all accounts to avoid Supabase's default row limit
+    const pageSize = 1000;
+    let page = 1;
+    let hasMore = true;
 
-      const category = account.ai_category || 'UNCATEGORIZED';
-      if (category in byCategory) {
-        byCategory[category][confIdx]++;
-      }
-    });
+    while (hasMore) {
+      const result = await AccountModel.list({}, page, pageSize, 'ai_confidence', 'desc');
+
+      result.data.forEach((account) => {
+        const confidence = account.ai_confidence || 0;
+        const confIdx = Math.min(Math.floor(confidence * 10), 9);
+        confidenceBuckets[confIdx]++;
+
+        const category = account.ai_category || 'UNCATEGORIZED';
+        if (category in byCategory) {
+          byCategory[category][confIdx]++;
+        }
+      });
+
+      hasMore = page < result.pagination.totalPages;
+      page++;
+    }
 
     const bucketLabels = ['0-0.1', '0.1-0.2', '0.2-0.3', '0.3-0.4', '0.4-0.5', '0.5-0.6', '0.6-0.7', '0.7-0.8', '0.8-0.9', '0.9-1.0'];
 
