@@ -872,7 +872,7 @@ async function processSecondaryBatchWithRetry(
   client: OpenRouter,
   usersWithTweets: BatchCategorizationInput[],
   batchNumber: number,
-  maxRetries: number = 3,
+  maxRetries: number = 5,
   retryDelay: number = 2000
 ): Promise<SecondaryBatchCategorizationResult[]> {
   const results: SecondaryBatchCategorizationResult[] = [];
@@ -1273,7 +1273,7 @@ async function processBatchWithRetry(
   client: OpenRouter,
   usersWithTweets: BatchCategorizationInput[],
   batchNumber: number,
-  maxRetries: number = 3,
+  maxRetries: number = 5,
   retryDelay: number = 2000
 ): Promise<BatchCategorizationResult[]> {
   const results: BatchCategorizationResult[] = [];

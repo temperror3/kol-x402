@@ -60,7 +60,7 @@ export const config = {
     // Enable parallel processing (set to false to use legacy sequential mode)
     enableParallelProcessing: process.env.BATCH_ENABLE_PARALLEL !== 'false',
     // Number of retries for failed AI batches
-    aiRetryCount: parseInt(process.env.BATCH_AI_RETRY_COUNT || '3', 10),
+    aiRetryCount: parseInt(process.env.BATCH_AI_RETRY_COUNT || '5', 10),
     // Delay between retries (ms)
     aiRetryDelay: parseInt(process.env.BATCH_AI_RETRY_DELAY || '2000', 10),
   },
