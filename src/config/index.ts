@@ -71,6 +71,34 @@ export const config = {
     model: process.env.OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free',
   },
 
+  // Mistral AI (uses standard OpenAI-compatible chat completions)
+  mistral: {
+    apiKey: process.env.MISTRAL_API_KEY || '',
+    model: process.env.MISTRAL_MODEL || 'mistral-small-latest',
+    endpoint: process.env.MISTRAL_ENDPOINT || 'https://api.mistral.ai/v1/chat/completions',
+  },
+
+  // Cerebras AI (uses standard OpenAI-compatible format)
+  cerebras: {
+    apiKey: process.env.CEREBRAS_API_KEY || '',
+    models: (process.env.CEREBRAS_MODELS || 'llama-3.3-70b,llama3.1-70b,llama3.1-8b')
+      .split(',')
+      .map((m) => m.trim()),
+    endpoint: process.env.CEREBRAS_ENDPOINT || 'https://api.cerebras.ai/v1/chat/completions',
+  },
+
+  // AI Provider settings (multi-provider support)
+  aiProvider: {
+    // Priority order for AI providers (comma-separated)
+    priorityOrder: (process.env.AI_PROVIDER_PRIORITY || 'mistral,cerebras,openrouter')
+      .split(',')
+      .map((p) => p.trim()),
+    // High traffic threshold in ms (switch provider after errors for this duration)
+    highTrafficThresholdMs: parseInt(process.env.AI_HIGH_TRAFFIC_THRESHOLD_MS || '120000', 10),
+    // Cooldown period before retrying a rate-limited provider (ms)
+    cooldownMs: parseInt(process.env.AI_COOLDOWN_MS || '300000', 10),
+  },
+
   // Categorization thresholds
   thresholds: {
     kol: {
@@ -95,12 +123,22 @@ export function validateConfig(): void {
     ['SUPABASE_URL', config.supabase.url],
     ['SUPABASE_SERVICE_ROLE_KEY', config.supabase.serviceRoleKey],
     ['RAPIDAPI_KEY', config.rapidApi.key],
-    ['OPENROUTER_API_KEY', config.openRouter.apiKey],
   ];
 
   const missing = required.filter(([, value]) => !value).map(([key]) => key);
 
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  // At least one AI provider must be configured
+  const hasOpenRouter = !!config.openRouter.apiKey;
+  const hasMistral = !!config.mistral.apiKey;
+  const hasCerebras = !!config.cerebras.apiKey;
+
+  if (!hasOpenRouter && !hasMistral && !hasCerebras) {
+    throw new Error(
+      'At least one AI provider API key must be configured: OPENROUTER_API_KEY, MISTRAL_API_KEY, or CEREBRAS_API_KEY'
+    );
   }
 }
