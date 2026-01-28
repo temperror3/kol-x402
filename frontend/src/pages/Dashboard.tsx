@@ -98,11 +98,6 @@ export default function Dashboard() {
     );
   }
 
-  // Helper to check if data is campaign analytics
-  const isCampaignAnalytics = (data: SummaryResponse | CampaignAnalytics): data is CampaignAnalytics => {
-    return 'campaign' in data;
-  };
-
   return (
     <div className="space-y-8">
       {/* Header */}

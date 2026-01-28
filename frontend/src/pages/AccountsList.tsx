@@ -35,7 +35,7 @@ export default function AccountsList() {
         if (currentCampaign) {
           // Fetch campaign-specific accounts
           const result = await getCampaignAccounts(currentCampaign.id, filters, page, 20);
-          setData(result as PaginatedResponse<Account>);
+          setData(result);
         } else {
           // Fallback to global accounts
           const result = await getAccounts(filters, page, 20);

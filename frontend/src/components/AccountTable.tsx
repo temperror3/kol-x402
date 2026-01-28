@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
-import type { Account } from '../types';
+import type { Account, CampaignAccount } from '../types';
 import CategoryBadge from './CategoryBadge';
 
 interface AccountTableProps {
-  accounts: Account[];
+  accounts: (Account | CampaignAccount)[];
   onSort?: (field: string) => void;
   sortField?: string;
   sortDir?: 'asc' | 'desc';
@@ -57,7 +57,9 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {accounts.map((account) => (
+            {accounts.map((account) => {
+              const rowId = 'account_id' in account ? account.account_id : account.id;
+              return (
               <tr key={account.id} className="hover:bg-slate-50/50 transition-colors group">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-4">
@@ -121,7 +123,7 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Link
-                      to={`/accounts/${account.id}`}
+                      to={`/accounts/${rowId}`}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium rounded-lg transition-colors"
                     >
                       View
@@ -142,7 +144,8 @@ export default function AccountTable({ accounts, onSort, sortField, sortDir }: A
                   </div>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
