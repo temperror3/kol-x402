@@ -10,6 +10,8 @@ import {
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { AccountModel, TweetModel, SearchQueryModel } from '../db/account.model.js';
+import { CampaignSearchQueryModel } from '../db/campaign.model.js';
+import type { Campaign } from '../types/index.js';
 
 export interface SearchCollectorResult {
   tweets: RapidApiTweet[];
@@ -18,10 +20,25 @@ export interface SearchCollectorResult {
 }
 
 /**
- * Search for tweets containing x402-related keywords using RapidAPI
+ * Search for tweets containing x402-related keywords using RapidAPI (backward compatible)
  * Discovers tweet authors from search results
  */
 export async function searchForX402Content(
+  keywords: string[] = [...config.searchKeywords.primary, ...config.searchKeywords.secondary],
+  maxPages: number = config.search.maxPages
+): Promise<SearchCollectorResult> {
+  return searchForTopicContent(undefined, keywords, maxPages);
+}
+
+/**
+ * Search for tweets containing topic-related keywords using RapidAPI
+ * Discovers tweet authors from search results
+ * @param campaign - Optional campaign for logging (if not provided, uses default query logging)
+ * @param keywords - Search terms to use
+ * @param maxPages - Maximum pages per keyword
+ */
+export async function searchForTopicContent(
+  campaign: Campaign | undefined,
   keywords: string[] = [...config.searchKeywords.primary, ...config.searchKeywords.secondary],
   maxPages: number = config.search.maxPages
 ): Promise<SearchCollectorResult> {
@@ -30,7 +47,7 @@ export async function searchForX402Content(
 
   for (const keyword of keywords) {
     try {
-      logger.info(`Searching for keyword: "${keyword}"`);
+      logger.info(`Searching for keyword: "${keyword}"${campaign ? ` (campaign: ${campaign.name})` : ''}`);
 
       const result = await searchTwitterWithPagination(keyword, maxPages, config.search.delayMs);
 
@@ -47,8 +64,12 @@ export async function searchForX402Content(
         logger.info(`Found ${result.tweets.length} tweets for "${keyword}" (${result.totalPages} pages)`);
       }
 
-      // Log search query
-      await SearchQueryModel.log(keyword, result.tweets?.length || 0);
+      // Log search query (to campaign-specific table if campaign provided)
+      if (campaign) {
+        await CampaignSearchQueryModel.log(campaign.id, keyword, result.tweets?.length || 0);
+      } else {
+        await SearchQueryModel.log(keyword, result.tweets?.length || 0);
+      }
 
       // Delay between different keyword searches
       if (keywords.indexOf(keyword) < keywords.length - 1) {
@@ -103,17 +124,21 @@ export async function processDiscoveredUsers(
 
 /**
  * Process tweets from search results and save to database
+ * @param tweets - Raw tweets from RapidAPI
+ * @param userAccountMap - Map of twitter_id -> account_id
+ * @param searchTerms - Optional custom search terms for keyword detection
  */
 export async function processDiscoveredTweets(
   tweets: RapidApiTweet[],
-  userAccountMap: Map<string, string> // twitter_id -> account_id
+  userAccountMap: Map<string, string>, // twitter_id -> account_id
+  searchTerms?: string[]
 ): Promise<number> {
   let savedCount = 0;
 
   for (const tweet of tweets) {
     const accountId = userAccountMap.get(tweet.user_info.rest_id);
     if (accountId) {
-      const transformedTweet = transformRapidApiTweet(tweet, accountId);
+      const transformedTweet = transformRapidApiTweet(tweet, accountId, searchTerms);
       try {
         await TweetModel.bulkInsert([transformedTweet]);
         savedCount++;
@@ -130,17 +155,22 @@ export async function processDiscoveredTweets(
 
 /**
  * Full discovery pipeline: search, save users, save tweets
+ * @param keywords - Search terms to use
+ * @param maxPages - Maximum pages per keyword
+ * @param campaign - Optional campaign for logging
  */
 export async function runFullDiscovery(
   keywords?: string[],
-  maxPages?: number
+  maxPages?: number,
+  campaign?: Campaign
 ): Promise<{
   usersCreated: number;
   usersUpdated: number;
   tweetsSaved: number;
+  discoveredAccountIds: string[];
 }> {
-  // Step 1: Search for x402 content
-  const searchResult = await searchForX402Content(keywords, maxPages);
+  // Step 1: Search for topic content
+  const searchResult = await searchForTopicContent(campaign, keywords, maxPages);
 
   // Step 2: Save users
   const { created, updated } = await processDiscoveredUsers(searchResult.users);
@@ -154,12 +184,15 @@ export async function runFullDiscovery(
     }
   }
 
-  // Step 4: Save tweets
-  const tweetsSaved = await processDiscoveredTweets(searchResult.tweets, userAccountMap);
+  // Step 4: Save tweets (pass search terms for keyword detection)
+  const tweetsSaved = await processDiscoveredTweets(searchResult.tweets, userAccountMap, keywords);
+
+  const discoveredAccountIds = Array.from(userAccountMap.values());
 
   return {
     usersCreated: created,
     usersUpdated: updated,
     tweetsSaved,
+    discoveredAccountIds,
   };
 }

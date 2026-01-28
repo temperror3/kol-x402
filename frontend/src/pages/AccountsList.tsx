@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getAccounts } from '../api/client';
-import type { Account, Category, PaginatedResponse, AccountFilters } from '../types';
+import { getAccounts, getCampaignAccounts } from '../api/client';
+import { useCampaign } from '../contexts/CampaignContext';
+import type { Account, Category, PaginatedResponse, AccountFilters, CampaignAccount } from '../types';
 import AccountTable from '../components/AccountTable';
 import Pagination from '../components/Pagination';
 
 export default function AccountsList() {
+  const { currentCampaign } = useCampaign();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<PaginatedResponse<Account> | null>(null);
+  const [data, setData] = useState<PaginatedResponse<Account> | PaginatedResponse<CampaignAccount> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,8 +31,16 @@ export default function AccountsList() {
           orderBy,
           orderDir,
         };
-        const result = await getAccounts(filters, page, 20);
-        setData(result);
+
+        if (currentCampaign) {
+          // Fetch campaign-specific accounts
+          const result = await getCampaignAccounts(currentCampaign.id, filters, page, 20);
+          setData(result as PaginatedResponse<Account>);
+        } else {
+          // Fallback to global accounts
+          const result = await getAccounts(filters, page, 20);
+          setData(result);
+        }
       } catch (err) {
         setError('Failed to load accounts');
         console.error(err);
@@ -39,7 +49,7 @@ export default function AccountsList() {
       }
     }
     fetchData();
-  }, [page, category, minConfidence, hasGithub, orderBy, orderDir]);
+  }, [page, category, minConfidence, hasGithub, orderBy, orderDir, currentCampaign]);
 
   const updateFilter = (key: string, value: string | null) => {
     const newParams = new URLSearchParams(searchParams);
@@ -78,7 +88,11 @@ export default function AccountsList() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Accounts</h1>
-          <p className="text-slate-500 mt-1">Browse and filter discovered accounts</p>
+          <p className="text-slate-500 mt-1">
+            {currentCampaign
+              ? `Accounts discovered for "${currentCampaign.name}"`
+              : 'Browse and filter discovered accounts'}
+          </p>
         </div>
         {data && (
           <div className="text-sm text-slate-500 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm">

@@ -81,6 +81,72 @@ For each user, the AI returns:
 - **Confidence**: 0-100% confidence score
 - **Reasoning**: Explanation of why this category was chosen
 
+## Campaign run flow
+
+When you **run a campaign** from the UI (e.g. "Run" on the x402 campaign), the system does two phases. Both require the backend to be running with **Redis** and **ENABLE_WORKERS=true**.
+
+### Phase 1: Search job (discovery)
+
+1. A **search job** is queued (e.g. "Search job 1").
+2. The search worker runs **discovery**: it searches Twitter for the campaign’s keywords, saves **tweets** and **users** to the DB, and links those users to the campaign in `campaign_accounts`.
+3. The worker then queues **one analyze job per discovered account** (only the accounts from this run).
+4. The search job **completes** and you see logs like:
+   - `Search job 1 completed: 58 tweets, 46 new users, 0 updated users; 46 analyze jobs queued`
+
+So **“job completed”** here means the **discovery** phase is done. It does **not** mean categorization is done yet.
+
+### Phase 2: Analyze jobs (categorization)
+
+1. The **analyze worker** processes each queued analyze job (concurrency 5).
+2. For each account it: fetches the user’s topic tweets, calls the AI (OpenRouter), and writes **KOL / UNCATEGORIZED** (and optionally DEVELOPER / ACTIVE_USER) into `campaign_accounts` for that campaign.
+3. You’ll see logs like: `Analyze job for @username completed: category=KOL, confidence=0.85`
+4. When all analyze jobs for that run have finished, every discovered account has a category and the campaign’s Accounts list and analytics (KOL / Developer / Active user) are up to date.
+
+### Why everyone was “uncategorized” before
+
+- **Workers disabled:** If `ENABLE_WORKERS` is not `true` or Redis isn’t running, only the search job runs. No analyze jobs run, so no AI categories are written and everyone stays uncategorized. Set `ENABLE_WORKERS=true` and run Redis so both workers start with the backend.
+- **Wrong accounts queued (fixed):** Previously, after discovery we queued analyze for up to 1000 *global* uncategorized accounts instead of only the accounts **just discovered** in that run. That’s fixed: we now queue analyze only for `discoveredAccountIds` from the same run, so the right accounts get categorized for the campaign you ran.
+
+### Summary
+
+| Step | Who does it | Result |
+|------|-------------|--------|
+| 1. Run campaign (UI) | API | Search job + N analyze jobs queued |
+| 2. Discovery | Search worker | Tweets/users saved, accounts linked to campaign |
+| 3. Categorization | Analyze worker | Each account gets AI category in `campaign_accounts` |
+| 4. UI | Frontend | Accounts list / analytics show KOL, Developer, Active user, Uncategory |
+
+Ensure **ENABLE_WORKERS=true** and **Redis** are set when you start the backend so both workers run and categorization happens after each campaign run.
+
+### How to run categorization (step-by-step)
+
+1. **Start Redis** (in a terminal):
+   ```bash
+   redis-server
+   ```
+   Leave it running. If Redis is already running (e.g. as a service), skip this.
+
+2. **Start the backend** (from the project root, in another terminal):
+   ```bash
+   npm run dev
+   ```
+   Or: `npm run start` (after `npm run build`).
+   - In the logs you **must** see: `Job workers started — campaign runs will queue categorization...`
+   - If you see `Job workers disabled` instead, check that `.env` has `ENABLE_WORKERS=true` and restart the backend.
+
+3. **Start the frontend** (optional, in another terminal):
+   ```bash
+   cd frontend && npm run dev
+   ```
+
+4. **Run a campaign from the UI**: open the app, go to Campaigns, click **Run** on a campaign (e.g. x402).
+   - Backend log: `Processing search job 1` → then `Search job 1 completed: … ; N analyze jobs queued`.
+   - Then you should see many lines like: `Processing analyze job for <id> (campaign: …)` and `Analyze job for @username completed: category=KOL, confidence=0.85`.
+
+5. **Refresh the campaign’s Accounts / Analytics** in the UI; you should see KOL, Developer, Active user, and Uncategory counts and lists.
+
+If you never see `Analyze job for @user completed` after a campaign run, Redis is likely not reachable (wrong `REDIS_URL`) or workers did not start (no “Job workers started” in logs).
+
 ## Quick Start
 
 ### Prerequisites

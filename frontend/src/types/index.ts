@@ -105,3 +105,90 @@ export interface AccountFilters {
   orderBy?: 'ai_confidence' | 'followers_count' | 'created_at' | 'ai_categorized_at';
   orderDir?: 'asc' | 'desc';
 }
+
+// Campaign types
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  search_terms: string[];
+  topic_description: string;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignStats {
+  total: number;
+  KOL: number;
+  DEVELOPER: number;
+  ACTIVE_USER: number;
+  UNCATEGORIZED: number;
+}
+
+export interface CampaignWithStats extends Campaign {
+  stats: CampaignStats;
+}
+
+export interface CampaignAccount {
+  id: string;
+  campaign_id: string;
+  account_id: string;
+  // Account info
+  twitter_id: string;
+  username: string;
+  display_name: string;
+  bio: string | null;
+  followers_count: number;
+  following_count: number;
+  profile_image_url: string | null;
+  has_github: boolean;
+  twitter_url: string | null;
+  // AI categorization for this campaign
+  ai_category: Category | null;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
+  ai_categorized_at: string | null;
+  // Quality scores
+  topic_consistency_score: number | null;
+  content_depth_score: number | null;
+  topic_focus_score: number | null;
+  red_flags: Array<{ type: string; description: string; severity: string }>;
+  primary_topics: string[];
+  keywords_found: string[];
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignAnalytics {
+  campaign: {
+    id: string;
+    name: string;
+  };
+  total: number;
+  byCategory: Record<Category | 'UNCATEGORIZED', number>;
+  percentages: Record<Category | 'UNCATEGORIZED', string>;
+  topAccounts: {
+    KOL: TopAccount[];
+    DEVELOPER: TopAccount[];
+    ACTIVE_USER: TopAccount[];
+  };
+}
+
+export interface CreateCampaignData {
+  name: string;
+  description?: string | null;
+  search_terms: string[];
+  topic_description: string;
+  is_active?: boolean;
+}
+
+export interface UpdateCampaignData {
+  name?: string;
+  description?: string | null;
+  search_terms?: string[];
+  topic_description?: string;
+  is_active?: boolean;
+}

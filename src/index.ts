@@ -15,11 +15,11 @@ async function main(): Promise<void> {
     // Start job workers only if enabled (requires Redis)
     let workers: ReturnType<typeof startAllWorkers> | null = null;
     if (config.enableWorkers) {
-      logger.info('Starting job workers...');
+      logger.info('Starting job workers (search + analyze)...');
       workers = startAllWorkers();
-      logger.info('Job workers started');
+      logger.info('Job workers started — campaign runs will queue categorization (KOL/Developer/Active user)');
     } else {
-      logger.info('Job workers disabled (set ENABLE_WORKERS=true to enable)');
+      logger.info('Job workers disabled (set ENABLE_WORKERS=true in .env to enable categorization)');
     }
 
     // Start server

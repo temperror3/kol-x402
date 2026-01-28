@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getSummary, getConfidenceDistribution } from '../api/client';
-import type { SummaryResponse, ConfidenceDistribution } from '../types';
+import { getSummary, getConfidenceDistribution, getCampaignAnalytics } from '../api/client';
+import { useCampaign } from '../contexts/CampaignContext';
+import type { SummaryResponse, ConfidenceDistribution, CampaignAnalytics } from '../types';
 import StatsCard from '../components/StatsCard';
 import CategoryPieChart from '../components/charts/CategoryPieChart';
 import ConfidenceHistogram from '../components/charts/ConfidenceHistogram';
@@ -31,7 +32,8 @@ const UserIcon = () => (
 );
 
 export default function Dashboard() {
-  const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const { currentCampaign } = useCampaign();
+  const [summary, setSummary] = useState<SummaryResponse | CampaignAnalytics | null>(null);
   const [confidence, setConfidence] = useState<ConfidenceDistribution | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,12 +42,24 @@ export default function Dashboard() {
     async function fetchData() {
       try {
         setLoading(true);
-        const [summaryData, confidenceData] = await Promise.all([
-          getSummary(),
-          getConfidenceDistribution(),
-        ]);
-        setSummary(summaryData);
-        setConfidence(confidenceData);
+
+        if (currentCampaign) {
+          // Fetch campaign-specific analytics
+          const [campaignAnalytics, confidenceData] = await Promise.all([
+            getCampaignAnalytics(currentCampaign.id),
+            getConfidenceDistribution(), // This still uses global data for now
+          ]);
+          setSummary(campaignAnalytics);
+          setConfidence(confidenceData);
+        } else {
+          // Fallback to global summary
+          const [summaryData, confidenceData] = await Promise.all([
+            getSummary(),
+            getConfidenceDistribution(),
+          ]);
+          setSummary(summaryData);
+          setConfidence(confidenceData);
+        }
       } catch (err) {
         setError('Failed to load dashboard data');
         console.error(err);
@@ -54,7 +68,7 @@ export default function Dashboard() {
       }
     }
     fetchData();
-  }, []);
+  }, [currentCampaign]);
 
   if (loading) {
     return (
@@ -84,13 +98,22 @@ export default function Dashboard() {
     );
   }
 
+  // Helper to check if data is campaign analytics
+  const isCampaignAnalytics = (data: SummaryResponse | CampaignAnalytics): data is CampaignAnalytics => {
+    return 'campaign' in data;
+  };
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-slate-500 mt-1">Overview of your x402 KOL discovery</p>
+          <p className="text-slate-500 mt-1">
+            {currentCampaign
+              ? `Insights for "${currentCampaign.name}" campaign`
+              : 'Overview of your KOL discovery'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <Link

@@ -185,12 +185,20 @@ export function transformRapidApiUser(userInfo: RapidApiUserInfo): {
   };
 }
 
+// Default x402 keywords for backward compatibility
+const DEFAULT_PRIMARY_KEYWORDS = ['x402', '#x402', 'x402 protocol', 'http 402'];
+const DEFAULT_SECONDARY_KEYWORDS = ['402 payment', 'crypto payments api', 'web monetization'];
+
 /**
  * Transform RapidAPI tweet to our internal format
+ * @param tweet - The raw tweet from RapidAPI
+ * @param accountId - The account ID in our database
+ * @param searchTerms - Optional custom search terms to check for (defaults to x402 keywords)
  */
 export function transformRapidApiTweet(
   tweet: RapidApiTweet,
-  accountId: string
+  accountId: string,
+  searchTerms?: string[]
 ): {
   twitter_id: string;
   account_id: string;
@@ -215,15 +223,14 @@ export function transformRapidApiTweet(
     tweet.entities?.urls?.some((url) => url.expanded_url?.includes('github.com')) ||
     false;
 
-  // Find x402 keywords
-  const x402Keywords: string[] = [];
-  const primaryKeywords = ['x402', '#x402', 'x402 protocol', 'http 402'];
-  const secondaryKeywords = ['402 payment', 'crypto payments api', 'web monetization'];
+  // Find keywords - use custom search terms or default x402 keywords
+  const keywordsFound: string[] = [];
+  const keywordsToCheck = searchTerms || [...DEFAULT_PRIMARY_KEYWORDS, ...DEFAULT_SECONDARY_KEYWORDS];
 
   const lowerContent = content.toLowerCase();
-  [...primaryKeywords, ...secondaryKeywords].forEach((keyword) => {
+  keywordsToCheck.forEach((keyword) => {
     if (lowerContent.includes(keyword.toLowerCase())) {
-      x402Keywords.push(keyword);
+      keywordsFound.push(keyword);
     }
   });
 
@@ -246,7 +253,7 @@ export function transformRapidApiTweet(
     created_at: createdAt,
     has_code: hasCode,
     has_github: hasGithub,
-    x402_keywords_found: x402Keywords,
+    x402_keywords_found: keywordsFound, // Keep field name for backward compatibility
   };
 }
 
@@ -266,7 +273,7 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * Search for a specific user's x402-related tweets
+ * Search for a specific user's x402-related tweets (backward compatible)
  * Uses query format: "from:{username} x402"
  */
 export async function searchUserX402Tweets(
@@ -274,16 +281,56 @@ export async function searchUserX402Tweets(
   maxPages: number = config.search.maxPages,
   delayMs: number = config.search.delayMs
 ): Promise<RapidApiTweet[]> {
-  // Build query to get user's x402 tweets
-  const query = `from:${username} x402`;
+  return searchUserTopicTweets(username, ['x402'], maxPages, delayMs);
+}
 
-  logger.info(`Searching for x402 tweets from @${username}`);
+/**
+ * Search for a specific user's topic-related tweets
+ * Uses query format: "from:{username} {searchTerm}" for each search term
+ * @param username - Twitter username to search
+ * @param searchTerms - Array of search terms to use
+ * @param maxPages - Maximum pages per search term
+ * @param delayMs - Delay between API calls
+ */
+export async function searchUserTopicTweets(
+  username: string,
+  searchTerms: string[],
+  maxPages: number = config.search.maxPages,
+  delayMs: number = config.search.delayMs
+): Promise<RapidApiTweet[]> {
+  const allTweets: RapidApiTweet[] = [];
+  const seenTweetIds = new Set<string>();
 
-  const result = await searchTwitterWithPagination(query, maxPages, delayMs);
+  // Search for each term and combine unique results
+  for (const term of searchTerms) {
+    // Clean up the search term (remove # for hashtags in query)
+    const cleanTerm = term.startsWith('#') ? term.substring(1) : term;
+    const query = `from:${username} ${cleanTerm}`;
 
-  logger.info(`Found ${result.tweets.length} x402 tweets from @${username}`);
+    logger.info(`Searching for "${cleanTerm}" tweets from @${username}`);
 
-  return result.tweets;
+    try {
+      const result = await searchTwitterWithPagination(query, maxPages, delayMs);
+
+      for (const tweet of result.tweets) {
+        if (!seenTweetIds.has(tweet.tweet_id)) {
+          seenTweetIds.add(tweet.tweet_id);
+          allTweets.push(tweet);
+        }
+      }
+
+      // Add delay between different search terms
+      if (searchTerms.indexOf(term) < searchTerms.length - 1) {
+        await delay(delayMs);
+      }
+    } catch (error) {
+      logger.error(`Error searching for "${cleanTerm}" from @${username}:`, error);
+    }
+  }
+
+  logger.info(`Found ${allTweets.length} total topic tweets from @${username}`);
+
+  return allTweets;
 }
 
 // Timeline API response types

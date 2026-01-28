@@ -141,3 +141,51 @@ export interface EnhancedAICategoryResult {
   redFlags: RedFlag[];
   primaryTopics: string[];
 }
+
+// Campaign for dynamic topic discovery
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  search_terms: string[];
+  topic_description: string;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Campaign-specific account categorization
+export interface CampaignAccount {
+  id: string;
+  campaign_id: string;
+  account_id: string;
+  ai_category: string | null;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
+  ai_categorized_at: string | null;
+  topic_consistency_score: number | null;
+  content_depth_score: number | null;
+  topic_focus_score: number | null;
+  red_flags: RedFlag[];
+  primary_topics: string[];
+  keywords_found: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+// Campaign search job data
+export interface CampaignSearchJobData {
+  campaignId: string;
+  searchTerms: string[];
+  topicDescription: string;
+  maxPages?: number;
+}
+
+// Campaign analyze job data
+export interface CampaignAnalyzeJobData {
+  campaignId: string;
+  accountId: string;
+  searchTerms: string[];
+  topicDescription: string;
+}

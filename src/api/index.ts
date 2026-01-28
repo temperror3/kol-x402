@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import accountsRouter from './routes/accounts.js';
 import searchRouter from './routes/search.js';
 import analyticsRouter from './routes/analytics.js';
+import campaignsRouter from './routes/campaigns.js';
 
 export function createApp(): Express {
   const app = express();
@@ -60,9 +61,20 @@ export function createApp(): Express {
   // API info
   app.get('/api', (_req: Request, res: Response) => {
     res.json({
-      name: 'x402 KOL Finder API',
-      version: '1.0.0',
+      name: 'KOL Finder API',
+      version: '2.0.0',
       endpoints: {
+        campaigns: {
+          'POST /api/campaigns': 'Create campaign',
+          'GET /api/campaigns': 'List campaigns',
+          'GET /api/campaigns/:id': 'Get campaign with stats',
+          'PUT /api/campaigns/:id': 'Update campaign',
+          'DELETE /api/campaigns/:id': 'Delete campaign (not default)',
+          'POST /api/campaigns/:id/run': 'Trigger discovery',
+          'GET /api/campaigns/:id/accounts': 'List campaign accounts',
+          'GET /api/campaigns/:id/analytics': 'Campaign analytics',
+          'GET /api/campaigns/default/info': 'Get default campaign',
+        },
         accounts: {
           'GET /api/accounts': 'List accounts with filtering',
           'GET /api/accounts/:id': 'Get account details',
@@ -88,6 +100,7 @@ export function createApp(): Express {
   });
 
   // Mount routes
+  app.use('/api/campaigns', campaignsRouter);
   app.use('/api/accounts', accountsRouter);
   app.use('/api/search', searchRouter);
   app.use('/api/analytics', analyticsRouter);

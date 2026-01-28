@@ -1,8 +1,12 @@
 import { OpenRouter } from '@openrouter/sdk';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import type { Account, AICategoryResult, EnhancedAICategoryResult, RedFlag } from '../types/index.js';
+import type { Account, AICategoryResult, EnhancedAICategoryResult, RedFlag, Campaign } from '../types/index.js';
 import type { RapidApiTweet } from '../collectors/rapidApiClient.js';
+
+// Default x402 topic context for backward compatibility
+const DEFAULT_TOPIC_DESCRIPTION = 'x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.';
+const DEFAULT_SEARCH_TERMS = ['x402', '#x402', 'x402 protocol', 'HTTP 402'];
 
 let openRouterClient: OpenRouter | null = null;
 
@@ -15,9 +19,13 @@ function getClient(): OpenRouter {
   return openRouterClient;
 }
 
-const SYSTEM_PROMPT = `You are an expert analyst categorizing Twitter/X users based on their x402-related activity.
+// Generate basic system prompt with dynamic topic context
+function generateSystemPrompt(topicDescription: string, searchTerms: string[]): string {
+  const termsStr = searchTerms.join(', ');
+  return `You are an expert analyst categorizing Twitter/X users based on their topic-related activity.
 
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+Topic Context: ${topicDescription}
+Search Terms: ${termsStr}
 
 Goal: identify GOOD KOLs (Key Opinion Leaders) who are independent analysts, NOT product promoters.
 
@@ -48,14 +56,22 @@ Respond ONLY with valid JSON in this exact format:
   "confidence": 0.0-1.0,
   "reasoning": "Brief explanation of why this category was chosen, mentioning key engagement metrics if relevant"
 }`;
+}
+
+// Legacy constant for backward compatibility
+const SYSTEM_PROMPT = generateSystemPrompt(DEFAULT_TOPIC_DESCRIPTION, DEFAULT_SEARCH_TERMS);
 // Note: DEVELOPER and ACTIVE_USER categories commented out - focusing on KOL only for now
 
-const ENHANCED_SYSTEM_PROMPT = `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
+// Generate enhanced system prompt with dynamic topic context
+function generateEnhancedSystemPrompt(topicDescription: string, searchTerms: string[]): string {
+  const termsStr = searchTerms.join(', ');
+  return `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
 
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+Topic Context: ${topicDescription}
+Search Terms: ${termsStr}
 
 PRIMARY RULE: A KOL must be independent. If the bio says Founder/CEO/Co-founder, "building X", "core team", or shows they work at a project, they are NOT a KOL.
-KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT required if their broader content is high-signal.
+KOLs can be broader crypto/web3 analysts; topic-related mentions are helpful but NOT required if their broader content is high-signal.
 
 ## Hard Exclusions (always UNCATEGORIZED)
 - Founder/CEO/co-founder/employee in bio or clearly tied to a project
@@ -79,7 +95,7 @@ KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT requ
 ## Scoring Criteria (0.0 - 1.0 each)
 
 ### topicConsistencyScore
-Does the user regularly discuss crypto payments/web3 monetization with substance?
+Does the user regularly discuss the topic with substance?
 - 0.75+: Consistent, high-signal analysis or education
 - 0.55-0.74: Regular relevant content mixed with other topics
 - <0.55: Rare or shallow mentions, mostly promotional
@@ -92,7 +108,7 @@ Does the content show REAL KNOWLEDGE and provide VALUE?
 
 ### topicFocusScore
 Is this person a focused EXPERT voice, not a generalist or promoter?
-- 0.7+: Focused independent analyst on crypto payments/monetization
+- 0.7+: Focused independent analyst on the topic
 - 0.6-0.69: Broader crypto/fintech focus with genuine expertise
 - <0.6: Too scattered or primarily self-promotional
 
@@ -129,10 +145,18 @@ Respond ONLY with valid JSON:
   "redFlags": [{ "type": "...", "description": "...", "severity": "low|medium|high" }],
   "primaryTopics": ["topic1", "topic2"]
 }`;
+}
 
-const SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
+// Legacy constant for backward compatibility
+const ENHANCED_SYSTEM_PROMPT = generateEnhancedSystemPrompt(DEFAULT_TOPIC_DESCRIPTION, DEFAULT_SEARCH_TERMS);
 
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+// Generate secondary system prompt with dynamic topic context
+function generateSecondarySystemPrompt(topicDescription: string, searchTerms: string[]): string {
+  const termsStr = searchTerms.join(', ');
+  return `You are an expert analyst classifying previously-uncategorized Twitter/X accounts.
+
+Topic Context: ${topicDescription}
+Search Terms: ${termsStr}
 
 IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
 Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
@@ -147,11 +171,11 @@ Strong signals include:
 - Role signals like "engineer", "developer", "builder", "infra", "backend"
 
 ### ACTIVE_USER
-Non-developer who actively uses or experiments with x402/crypto payment APIs.
+Non-developer who actively uses or experiments with the topic/related APIs.
 Signals include:
 - Describing real usage, integrations, demos, or feedback
 - Asking/answering practical questions about using the protocol
-- Sharing results, learnings, or issues from using x402/related APIs
+- Sharing results, learnings, or issues from using related APIs
 - Active users is not a company founder or the CEO
 
 ### UNCATEGORIZED
@@ -159,7 +183,7 @@ Use when there is insufficient evidence, or the account is:
 - A company/brand/official account
 - Purely promotional, marketing, or hype-driven
 - Mostly memes/retweets/engagement farming
-- Not clearly related to x402 or crypto payments usage/building
+- Not clearly related to the topic or usage/building
 
 Decision rules:
 - Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
@@ -172,6 +196,10 @@ Respond ONLY with valid JSON:
   "confidence": 0.0-1.0,
   "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
 }`;
+}
+
+// Legacy constant for backward compatibility
+const SECONDARY_SYSTEM_PROMPT = generateSecondarySystemPrompt(DEFAULT_TOPIC_DESCRIPTION, DEFAULT_SEARCH_TERMS);
 
 function formatTweets(tweets: RapidApiTweet[]): string {
   return tweets
@@ -298,33 +326,42 @@ function parseAIResponse(content: string): AICategoryResult {
 }
 
 /**
- * Categorize a user based on their x402 tweets using AI
+ * Categorize a user based on their topic tweets using AI
+ * @param account - The account to categorize
+ * @param tweets - Topic-related tweets from the user
+ * @param campaign - Optional campaign context for dynamic topics (defaults to x402)
  */
 export async function categorizeUserWithAI(
   account: Account,
-  tweets: RapidApiTweet[]
+  tweets: RapidApiTweet[],
+  campaign?: Campaign
 ): Promise<AICategoryResult> {
   const client = getClient();
+
+  // Use campaign context or defaults
+  const topicDescription = campaign?.topic_description || DEFAULT_TOPIC_DESCRIPTION;
+  const searchTerms = campaign?.search_terms || DEFAULT_SEARCH_TERMS;
 
   // If no tweets, return uncategorized
   if (tweets.length === 0) {
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
-      reasoning: 'No x402-related tweets found for this user',
+      reasoning: 'No topic-related tweets found for this user',
     };
   }
 
   const userPrompt = buildUserPrompt(account, tweets);
+  const systemPrompt = generateSystemPrompt(topicDescription, searchTerms);
 
   try {
-    logger.info(`Categorizing @${account.username} with AI (${tweets.length} tweets)`);
+    logger.info(`Categorizing @${account.username} with AI (${tweets.length} tweets)${campaign ? ` for campaign "${campaign.name}"` : ''}`);
 
     // Use streaming to get the response
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -574,17 +611,26 @@ function parseSecondaryAIResponse(content: string): AICategoryResult {
 
 /**
  * Enhanced user categorization based on content quality
- * Uses both x402 tweets and general timeline for holistic analysis
+ * Uses both topic tweets and general timeline for holistic analysis
+ * @param account - The account to categorize
+ * @param topicTweets - Topic-related tweets from the user
+ * @param generalTweets - General timeline tweets from the user
+ * @param campaign - Optional campaign context for dynamic topics (defaults to x402)
  */
 export async function categorizeUserEnhanced(
   account: Account,
-  x402Tweets: RapidApiTweet[],
-  generalTweets: RapidApiTweet[]
+  topicTweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[],
+  campaign?: Campaign
 ): Promise<EnhancedAICategoryResult> {
   const client = getClient();
 
+  // Use campaign context or defaults
+  const topicDescription = campaign?.topic_description || DEFAULT_TOPIC_DESCRIPTION;
+  const searchTerms = campaign?.search_terms || DEFAULT_SEARCH_TERMS;
+
   // If no tweets at all, return uncategorized
-  if (x402Tweets.length === 0 && generalTweets.length === 0) {
+  if (topicTweets.length === 0 && generalTweets.length === 0) {
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
@@ -597,18 +643,19 @@ export async function categorizeUserEnhanced(
     };
   }
 
-  const userPrompt = buildEnhancedUserPrompt(account, x402Tweets, generalTweets);
+  const userPrompt = buildEnhancedUserPrompt(account, topicTweets, generalTweets);
+  const systemPrompt = generateEnhancedSystemPrompt(topicDescription, searchTerms);
 
   try {
     logger.info(
-      `Enhanced categorizing @${account.username} (${x402Tweets.length} x402 tweets, ${generalTweets.length} timeline tweets)`
+      `Enhanced categorizing @${account.username} (${topicTweets.length} topic tweets, ${generalTweets.length} timeline tweets)${campaign ? ` for campaign "${campaign.name}"` : ''}`
     );
 
     // Use streaming to get the response
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: ENHANCED_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -655,15 +702,24 @@ export async function categorizeUserEnhanced(
 /**
  * Secondary categorization for previously-uncategorized accounts
  * Determines DEVELOPER vs ACTIVE_USER vs UNCATEGORIZED
+ * @param account - The account to categorize
+ * @param topicTweets - Topic-related tweets from the user
+ * @param generalTweets - General timeline tweets from the user
+ * @param campaign - Optional campaign context for dynamic topics (defaults to x402)
  */
 export async function categorizeUserForSecondaryCategories(
   account: Account,
-  x402Tweets: RapidApiTweet[],
-  generalTweets: RapidApiTweet[]
+  topicTweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[],
+  campaign?: Campaign
 ): Promise<AICategoryResult> {
   const client = getClient();
 
-  if (x402Tweets.length === 0 && generalTweets.length === 0) {
+  // Use campaign context or defaults
+  const topicDescription = campaign?.topic_description || DEFAULT_TOPIC_DESCRIPTION;
+  const searchTerms = campaign?.search_terms || DEFAULT_SEARCH_TERMS;
+
+  if (topicTweets.length === 0 && generalTweets.length === 0) {
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
@@ -671,17 +727,18 @@ export async function categorizeUserForSecondaryCategories(
     };
   }
 
-  const userPrompt = buildSecondaryUserPrompt(account, x402Tweets, generalTweets);
+  const userPrompt = buildSecondaryUserPrompt(account, topicTweets, generalTweets);
+  const systemPrompt = generateSecondarySystemPrompt(topicDescription, searchTerms);
 
   try {
     logger.info(
-      `Secondary categorizing @${account.username} (${x402Tweets.length} x402 tweets, ${generalTweets.length} timeline tweets)`
+      `Secondary categorizing @${account.username} (${topicTweets.length} topic tweets, ${generalTweets.length} timeline tweets)${campaign ? ` for campaign "${campaign.name}"` : ''}`
     );
 
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: SECONDARY_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -742,9 +799,13 @@ export interface SecondaryBatchCategorizationResult {
   error?: string;
 }
 
-const BATCH_SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
+// Generate batch secondary system prompt with dynamic topic context
+function generateBatchSecondarySystemPrompt(topicDescription: string, searchTerms: string[]): string {
+  const termsStr = searchTerms.join(', ');
+  return `You are an expert analyst classifying previously-uncategorized Twitter/X accounts.
 
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+Topic Context: ${topicDescription}
+Search Terms: ${termsStr}
 
 IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
 Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
@@ -759,11 +820,11 @@ Strong signals include:
 - Role signals like "engineer", "developer", "builder", "infra", "backend"
 
 ### ACTIVE_USER
-Non-developer who actively uses or experiments with x402/crypto payment APIs.
+Non-developer who actively uses or experiments with the topic/related APIs.
 Signals include:
 - Describing real usage, integrations, demos, or feedback
 - Asking/answering practical questions about using the protocol
-- Sharing results, learnings, or issues from using x402/related APIs
+- Sharing results, learnings, or issues from using related APIs
 - Active users is not a company founder or the CEO
 
 ### UNCATEGORIZED
@@ -771,7 +832,7 @@ Use when there is insufficient evidence, or the account is:
 - A company/brand/official account
 - Purely promotional, marketing, or hype-driven
 - Mostly memes/retweets/engagement farming
-- Not clearly related to x402 or crypto payments usage/building
+- Not clearly related to the topic or usage/building
 
 Decision rules:
 - Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
@@ -789,6 +850,10 @@ Respond ONLY with a valid JSON array:
     "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
   }
 ]`;
+}
+
+// Legacy constant for backward compatibility
+const BATCH_SECONDARY_SYSTEM_PROMPT = generateBatchSecondarySystemPrompt(DEFAULT_TOPIC_DESCRIPTION, DEFAULT_SEARCH_TERMS);
 
 /**
  * Build batch user prompt for secondary categorization
@@ -873,8 +938,13 @@ async function processSecondaryBatchWithRetry(
   usersWithTweets: BatchCategorizationInput[],
   batchNumber: number,
   maxRetries: number = 3,
-  retryDelay: number = 2000
+  retryDelay: number = 2000,
+  campaign?: Campaign
 ): Promise<SecondaryBatchCategorizationResult[]> {
+  // Use campaign context or defaults
+  const topicDescription = campaign?.topic_description || DEFAULT_TOPIC_DESCRIPTION;
+  const searchTerms = campaign?.search_terms || DEFAULT_SEARCH_TERMS;
+  const batchSecondaryPrompt = generateBatchSecondarySystemPrompt(topicDescription, searchTerms);
   const results: SecondaryBatchCategorizationResult[] = [];
   let lastError: Error | null = null;
 
@@ -887,7 +957,7 @@ async function processSecondaryBatchWithRetry(
       const stream = await client.chat.send({
         model: config.openRouter.model,
         messages: [
-          { role: 'system', content: BATCH_SECONDARY_SYSTEM_PROMPT },
+          { role: 'system', content: batchSecondaryPrompt },
           { role: 'user', content: userPrompt },
         ],
         stream: true,
@@ -995,13 +1065,15 @@ async function processSecondaryBatchWithRetry(
  * @param maxBatchSize Maximum number of users to process in a single AI request (default: 5)
  * @param maxRetries Maximum number of retries for failed batches (default: 3)
  * @param retryDelay Base delay between retries in ms (default: 2000)
+ * @param campaign Optional campaign context for dynamic topics (defaults to x402)
  * @returns Array of categorization results
  */
 export async function categorizeUsersSecondaryBatch(
   inputs: BatchCategorizationInput[],
   maxBatchSize: number = 5,
   maxRetries: number = config.batch.aiRetryCount,
-  retryDelay: number = config.batch.aiRetryDelay
+  retryDelay: number = config.batch.aiRetryDelay,
+  campaign?: Campaign
 ): Promise<SecondaryBatchCategorizationResult[]> {
   const client = getClient();
   const allResults: SecondaryBatchCategorizationResult[] = [];
@@ -1014,9 +1086,9 @@ export async function categorizeUsersSecondaryBatch(
     const usersWithoutTweets: BatchCategorizationInput[] = [];
 
     for (const input of batch) {
-      const x402Tweets = input.x402Tweets || [];
+      const topicTweets = input.x402Tweets || [];
       const generalTweets = input.generalTweets || [];
-      if (x402Tweets.length === 0 && generalTweets.length === 0) {
+      if (topicTweets.length === 0 && generalTweets.length === 0) {
         usersWithoutTweets.push(input);
       } else {
         usersWithTweets.push(input);
@@ -1043,7 +1115,8 @@ export async function categorizeUsersSecondaryBatch(
       usersWithTweets,
       batchNumber,
       maxRetries,
-      retryDelay
+      retryDelay,
+      campaign
     );
 
     allResults.push(...batchResults);
@@ -1052,12 +1125,16 @@ export async function categorizeUsersSecondaryBatch(
   return allResults;
 }
 
-const BATCH_SYSTEM_PROMPT = `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
+// Generate batch system prompt with dynamic topic context
+function generateBatchSystemPrompt(topicDescription: string, searchTerms: string[]): string {
+  const termsStr = searchTerms.join(', ');
+  return `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
 
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
+Topic Context: ${topicDescription}
+Search Terms: ${termsStr}
 
 PRIMARY RULE: A KOL must be independent. If the bio says Founder/CEO/Co-founder, "building X", "core team", or shows they work at a project, they are NOT a KOL.
-KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT required if their broader content is high-signal.
+KOLs can be broader crypto/web3 analysts; topic-related mentions are helpful but NOT required if their broader content is high-signal.
 
 ## Hard Exclusions (always UNCATEGORIZED)
 - Founder/CEO/co-founder/employee in bio or clearly tied to a project
@@ -1081,7 +1158,7 @@ KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT requ
 ## Scoring Criteria (0.0 - 1.0 each)
 
 ### topicConsistencyScore
-Does the user regularly discuss crypto payments/web3 monetization with substance?
+Does the user regularly discuss the topic with substance?
 - 0.75+: Consistent, high-signal analysis or education
 - 0.55-0.74: Regular relevant content mixed with other topics
 - <0.55: Rare or shallow mentions, mostly promotional
@@ -1094,7 +1171,7 @@ Does the content show REAL KNOWLEDGE and provide VALUE?
 
 ### topicFocusScore
 Is this person a focused EXPERT voice, not a generalist or promoter?
-- 0.7+: Focused independent analyst on crypto payments/monetization
+- 0.7+: Focused independent analyst on the topic
 - 0.6-0.69: Broader crypto/fintech focus with genuine expertise
 - <0.6: Too scattered or primarily self-promotional
 
@@ -1136,6 +1213,10 @@ Respond ONLY with a valid JSON array:
     "primaryTopics": ["topic1", "topic2"]
   }
 ]`;
+}
+
+// Legacy constant for backward compatibility
+const BATCH_SYSTEM_PROMPT = generateBatchSystemPrompt(DEFAULT_TOPIC_DESCRIPTION, DEFAULT_SEARCH_TERMS);
 
 /**
  * Build batch user prompt for multiple users
@@ -1274,21 +1355,27 @@ async function processBatchWithRetry(
   usersWithTweets: BatchCategorizationInput[],
   batchNumber: number,
   maxRetries: number = 3,
-  retryDelay: number = 2000
+  retryDelay: number = 2000,
+  campaign?: Campaign
 ): Promise<BatchCategorizationResult[]> {
+  // Use campaign context or defaults
+  const topicDescription = campaign?.topic_description || DEFAULT_TOPIC_DESCRIPTION;
+  const searchTerms = campaign?.search_terms || DEFAULT_SEARCH_TERMS;
+  const batchPrompt = generateBatchSystemPrompt(topicDescription, searchTerms);
+
   const results: BatchCategorizationResult[] = [];
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      logger.info(`Batch categorizing ${usersWithTweets.length} users (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
+      logger.info(`Batch categorizing ${usersWithTweets.length} users (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}${campaign ? ` for campaign "${campaign.name}"` : ''}`);
 
       const userPrompt = buildBatchUserPrompt(usersWithTweets);
 
       const stream = await client.chat.send({
         model: config.openRouter.model,
         messages: [
-          { role: 'system', content: BATCH_SYSTEM_PROMPT },
+          { role: 'system', content: batchPrompt },
           { role: 'user', content: userPrompt },
         ],
         stream: true,
@@ -1415,13 +1502,15 @@ async function processBatchWithRetry(
  * @param maxBatchSize Maximum number of users to process in a single AI request (default: 5)
  * @param maxRetries Maximum number of retries for failed batches (default: 3)
  * @param retryDelay Base delay between retries in ms (default: 2000)
+ * @param campaign Optional campaign context for dynamic topics (defaults to x402)
  * @returns Array of categorization results
  */
 export async function categorizeUsersBatch(
   inputs: BatchCategorizationInput[],
   maxBatchSize: number = 5,
   maxRetries: number = config.batch.aiRetryCount,
-  retryDelay: number = config.batch.aiRetryDelay
+  retryDelay: number = config.batch.aiRetryDelay,
+  campaign?: Campaign
 ): Promise<BatchCategorizationResult[]> {
   const client = getClient();
   const allResults: BatchCategorizationResult[] = [];
@@ -1436,9 +1525,9 @@ export async function categorizeUsersBatch(
     const usersWithoutTweets: BatchCategorizationInput[] = [];
 
     for (const input of batch) {
-      const x402Tweets = input.x402Tweets || [];
+      const topicTweets = input.x402Tweets || [];
       const generalTweets = input.generalTweets || [];
-      if (x402Tweets.length === 0 && generalTweets.length === 0) {
+      if (topicTweets.length === 0 && generalTweets.length === 0) {
         usersWithoutTweets.push(input);
       } else {
         usersWithTweets.push(input);
@@ -1473,7 +1562,8 @@ export async function categorizeUsersBatch(
       usersWithTweets,
       batchNumber,
       maxRetries,
-      retryDelay
+      retryDelay,
+      campaign
     );
 
     allResults.push(...batchResults);
