@@ -7,19 +7,22 @@ const router = Router();
 
 /**
  * GET /api/analytics/summary
- * Get overall stats and category breakdown (uses AI categories)
+ * Get overall stats and category breakdown. Optional ?configId= filters by configuration.
  */
-router.get('/summary', async (_req: Request, res: Response) => {
+router.get('/summary', async (req: Request, res: Response) => {
   try {
-    const categoryStats = await AccountModel.getAICategoryStats();
+    const configId = req.query.configId as string | undefined;
+    const filters = configId ? { configId } : {};
+    const categoryStats = configId
+      ? await getCategoryStatsForConfig(configId)
+      : await AccountModel.getAICategoryStats();
 
     const total = Object.values(categoryStats).reduce((sum, count) => sum + count, 0);
 
-    // Get top accounts per AI category
     const [topKOLs, topDevs, topUsers] = await Promise.all([
-      AccountModel.list({ aiCategory: 'KOL' }, 1, 5, 'ai_confidence', 'desc'),
-      AccountModel.list({ aiCategory: 'DEVELOPER' }, 1, 5, 'ai_confidence', 'desc'),
-      AccountModel.list({ aiCategory: 'ACTIVE_USER' }, 1, 5, 'ai_confidence', 'desc'),
+      AccountModel.list({ ...filters, aiCategory: 'KOL' }, 1, 5, 'ai_confidence', 'desc'),
+      AccountModel.list({ ...filters, aiCategory: 'DEVELOPER' }, 1, 5, 'ai_confidence', 'desc'),
+      AccountModel.list({ ...filters, aiCategory: 'ACTIVE_USER' }, 1, 5, 'ai_confidence', 'desc'),
     ]);
 
     res.json({
@@ -63,16 +66,33 @@ router.get('/summary', async (_req: Request, res: Response) => {
   }
 });
 
+/** Category counts for accounts linked to a configuration */
+async function getCategoryStatsForConfig(configId: string): Promise<Record<string, number>> {
+  const [kol, dev, active, total] = await Promise.all([
+    AccountModel.list({ configId, aiCategory: 'KOL' }, 1, 1).then((r) => r.pagination.total),
+    AccountModel.list({ configId, aiCategory: 'DEVELOPER' }, 1, 1).then((r) => r.pagination.total),
+    AccountModel.list({ configId, aiCategory: 'ACTIVE_USER' }, 1, 1).then((r) => r.pagination.total),
+    AccountModel.list({ configId }, 1, 1).then((r) => r.pagination.total),
+  ]);
+  return {
+    KOL: kol,
+    DEVELOPER: dev,
+    ACTIVE_USER: active,
+    UNCATEGORIZED: Math.max(0, total - kol - dev - active),
+  };
+}
+
 /**
  * GET /api/analytics/export
- * Export accounts as CSV (uses AI categories)
+ * Export accounts as CSV. Optional ?configId= filters by configuration.
  */
 router.get('/export', async (req: Request, res: Response) => {
   try {
     const category = req.query.category as Category | undefined;
     const minConfidence = parseFloat(req.query.minConfidence as string) || 0;
+    const configId = req.query.configId as string | undefined;
+    const listFilters = { aiCategory: category, minAiConfidence: minConfidence, ...(configId && { configId }) };
 
-    // Generate CSV with AI fields
     const headers = [
       'username',
       'display_name',
@@ -95,7 +115,7 @@ router.get('/export', async (req: Request, res: Response) => {
 
     while (hasMore) {
       const result = await AccountModel.list(
-        { aiCategory: category, minAiConfidence: minConfidence },
+        listFilters,
         page,
         pageSize,
         'ai_confidence',
@@ -125,7 +145,7 @@ router.get('/export', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="x402-accounts-${category || 'all'}-${Date.now()}.csv"`
+      `attachment; filename="kol-accounts-${category || 'all'}${configId ? '-config' : ''}-${Date.now()}.csv"`
     );
     res.send(csv);
   } catch (error) {
@@ -136,15 +156,16 @@ router.get('/export', async (req: Request, res: Response) => {
 
 /**
  * GET /api/analytics/outreach
- * Get outreach recommendations based on AI categories
+ * Get outreach recommendations. Optional ?configId= filters by configuration.
  */
 router.get('/outreach', async (req: Request, res: Response) => {
   try {
     const category = req.query.category as Category | undefined;
+    const configId = req.query.configId as string | undefined;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+    const filters = { aiCategory: category, ...(configId && { configId }) };
 
-    // Get accounts sorted by AI confidence
-    const result = await AccountModel.list({ aiCategory: category }, 1, limit, 'ai_confidence', 'desc');
+    const result = await AccountModel.list(filters, 1, limit, 'ai_confidence', 'desc');
 
     const recommendations = result.data.map((account) => {
       // Generate outreach recommendation based on AI category
@@ -240,35 +261,35 @@ router.get('/confidence-distribution', async (_req: Request, res: Response) => {
   }
 });
 
-// Helper function for AI-based outreach recommendations
+// Generic outreach recommendations (topic-agnostic)
 function getAIOutreachRecommendation(
   category: string,
-  reasoning: string
+  _reasoning: string
 ): { priority: 'high' | 'medium' | 'low'; action: string; template: string } {
   switch (category) {
     case 'KOL':
       return {
         priority: 'high',
         action: 'Partner for promotion and awareness campaigns',
-        template: `Hi! We noticed your influential content about x402. Would you be interested in a partnership to help spread awareness about HTTP 402 payment protocol?`,
+        template: `Hi! We noticed your influential content on this topic. Would you be interested in a partnership to help spread awareness?`,
       };
     case 'DEVELOPER':
       return {
         priority: 'high',
-        action: 'Invite to build and host APIs on the platform',
-        template: `Hi! We saw your technical work with x402. We'd love to invite you to our developer program - you could host your APIs and monetize them using the x402 protocol.`,
+        action: 'Invite to build and integrate',
+        template: `Hi! We saw your technical work in this space. We'd love to invite you to our developer program.`,
       };
     case 'ACTIVE_USER':
       return {
         priority: 'medium',
         action: 'Invite to try the platform and provide feedback',
-        template: `Hi! We noticed your interest in x402. Would you like early access to try our platform? We'd love your feedback!`,
+        template: `Hi! We noticed your interest. Would you like early access to try our platform? We'd love your feedback!`,
       };
     default:
       return {
         priority: 'low',
         action: 'Monitor for future engagement',
-        template: `Thanks for your interest in x402! Follow us for updates.`,
+        template: `Thanks for your interest! Follow us for updates.`,
       };
   }
 }

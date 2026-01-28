@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getSummary, getConfidenceDistribution } from '../api/client';
+import { getSummary, getConfidenceDistribution, getDefaultConfiguration } from '../api/client';
 import type { SummaryResponse, ConfidenceDistribution } from '../types';
 import StatsCard from '../components/StatsCard';
 import CategoryPieChart from '../components/charts/CategoryPieChart';
 import ConfidenceHistogram from '../components/charts/ConfidenceHistogram';
+import ConfigurationSelector from '../components/ConfigurationSelector';
 
 const UsersIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,15 +34,22 @@ const UserIcon = () => (
 export default function Dashboard() {
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [confidence, setConfidence] = useState<ConfidenceDistribution | null>(null);
+  const [configId, setConfigId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDefaultConfiguration().then((c) => {
+      if (c) setConfigId(c.id);
+    });
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
         const [summaryData, confidenceData] = await Promise.all([
-          getSummary(),
+          getSummary(configId ?? undefined),
           getConfidenceDistribution(),
         ]);
         setSummary(summaryData);
@@ -54,7 +62,7 @@ export default function Dashboard() {
       }
     }
     fetchData();
-  }, []);
+  }, [configId]);
 
   if (loading) {
     return (
@@ -87,12 +95,17 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-slate-500 mt-1">Overview of your x402 KOL discovery</p>
+          <p className="text-slate-500 mt-1">Overview of KOL discovery</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <ConfigurationSelector
+            value={configId}
+            onChange={setConfigId}
+            showAllOption
+          />
           <Link
             to="/accounts"
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 font-medium hover:bg-slate-50 transition-colors shadow-sm"

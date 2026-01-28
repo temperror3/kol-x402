@@ -20,7 +20,7 @@ import { config, validateConfig } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import {
   fetchUserDataBatched,
-  searchUserX402Tweets,
+  searchUserTopicTweets,
   fetchUserTimeline,
   delay,
   type UserTweetData,
@@ -31,7 +31,8 @@ import {
   type BatchCategorizationInput,
 } from '../services/openRouterClient.js';
 import { AccountModel } from '../db/account.model.js';
-import type { Account } from '../types/index.js';
+import { ConfigurationModel } from '../db/configuration.model.js';
+import type { Account, SearchConfiguration } from '../types/index.js';
 
 // Marker to identify accounts that have been through secondary categorization
 const SECONDARY_PASS_MARKER = '[SECONDARY_PASS]';
@@ -64,7 +65,10 @@ function addSecondaryMarker(reasoning: string): string {
 /**
  * Legacy sequential processing mode (for comparison/fallback)
  */
-async function runSequentialCategorization(accounts: Account[]): Promise<{
+async function runSequentialCategorization(
+  accounts: Account[],
+  searchConfig: SearchConfiguration
+): Promise<{
   analyzedCount: number;
   skippedCount: number;
   categoryStats: Record<string, number>;
@@ -79,7 +83,6 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 
   for (const account of accounts) {
     try {
-      // Skip users that have already been through secondary categorization
       if (hasBeenSecondaryProcessed(account)) {
         logger.info(`Skipping @${account.username} - already secondary categorized`);
         skippedCount++;
@@ -88,8 +91,9 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 
       logger.info(`\nAnalyzing @${account.username}...`);
 
-      const userX402Tweets = await searchUserX402Tweets(
+      const topicTweets = await searchUserTopicTweets(
         account.username,
+        searchConfig,
         config.search.maxPagesPerUser
       );
 
@@ -101,8 +105,9 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 
       const aiResult = await categorizeUserForSecondaryCategories(
         account,
-        userX402Tweets,
-        generalTimeline
+        topicTweets,
+        generalTimeline,
+        searchConfig
       );
 
       // Normalize category - don't allow KOL in secondary categorization
@@ -146,7 +151,10 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 /**
  * Optimized batch processing mode
  */
-async function runBatchCategorization(accounts: Account[]): Promise<{
+async function runBatchCategorization(
+  accounts: Account[],
+  searchConfig: SearchConfiguration
+): Promise<{
   analyzedCount: number;
   skippedCount: number;
   categoryStats: Record<string, number>;
@@ -157,7 +165,6 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     UNCATEGORIZED: 0,
   };
 
-  // Filter out already secondary-categorized accounts
   const uncategorizedAccounts = accounts.filter((account) => {
     if (hasBeenSecondaryProcessed(account)) {
       logger.info(`Skipping @${account.username} - already secondary categorized`);
@@ -173,13 +180,12 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     return { analyzedCount: 0, skippedCount, categoryStats };
   }
 
-  logger.info(`\nProcessing ${uncategorizedAccounts.length} accounts in batches...`);
+  logger.info(`\nProcessing ${uncategorizedAccounts.length} accounts for ${searchConfig.name}...`);
   logger.info(`Batch settings:`);
   logger.info(`  - Data fetch concurrency: ${config.batch.dataFetchConcurrency}`);
   logger.info(`  - Data fetch batch size: ${config.batch.dataFetchBatchSize}`);
   logger.info(`  - AI categorization batch size: ${config.batch.aiCategorizationBatchSize}`);
 
-  // Step 1: Fetch tweet data for all accounts in parallel batches
   logger.info('\n--- Step 1: Fetching tweet data ---');
   const usernames = uncategorizedAccounts.map((a) => a.username);
 
@@ -187,6 +193,7 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     batchSize: config.batch.dataFetchBatchSize,
     maxConcurrentPerBatch: config.batch.dataFetchConcurrency,
     delayBetweenBatches: config.batch.dataFetchBatchDelay,
+    searchConfig,
     onBatchComplete: (batchNum, totalBatches, results) => {
       const successCount = results.filter((r) => !r.error).length;
       logger.info(`Batch ${batchNum}/${totalBatches} complete: ${successCount}/${results.length} successful`);
@@ -212,9 +219,9 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     };
   });
 
-  // Process in AI batches
   const categorizationResults = await categorizeUsersSecondaryBatch(
     batchInputs,
+    searchConfig,
     config.batch.aiCategorizationBatchSize
   );
 
@@ -272,7 +279,19 @@ async function runSecondaryCategorization(): Promise<void> {
 
   try {
     validateConfig();
-    logger.info('Configuration validated');
+    const configId = process.env.DEFAULT_CONFIG_ID ?? null;
+    const searchConfig = configId
+      ? await ConfigurationModel.getById(configId)
+      : await ConfigurationModel.getDefault();
+
+    if (!searchConfig) {
+      logger.error(
+        'No search configuration found. Set DEFAULT_CONFIG_ID or create a default config via the API.'
+      );
+      process.exit(1);
+    }
+
+    logger.info(`Using config: ${searchConfig.name} (${searchConfig.id})`);
     logger.info(`Max pages per user: ${config.search.maxPagesPerUser}`);
     logger.info(`Max timeline tweets: ${config.search.maxTimelineTweets}`);
     logger.info(`Delay between requests: ${config.search.delayMs}ms`);
@@ -283,7 +302,6 @@ async function runSecondaryCategorization(): Promise<void> {
     logger.info('Step 1: Load UNCATEGORIZED accounts...');
     logger.info('-'.repeat(50));
 
-    // Get all UNCATEGORIZED accounts
     const { data: accounts } = await AccountModel.list(
       { aiCategory: 'UNCATEGORIZED' },
       1,
@@ -321,10 +339,10 @@ async function runSecondaryCategorization(): Promise<void> {
 
     if (config.batch.enableParallelProcessing) {
       logger.info('Using OPTIMIZED batch processing mode');
-      result = await runBatchCategorization(accounts);
+      result = await runBatchCategorization(accounts, searchConfig);
     } else {
       logger.info('Using LEGACY sequential processing mode');
-      result = await runSequentialCategorization(accounts);
+      result = await runSequentialCategorization(accounts, searchConfig);
     }
 
     const elapsedTime = Date.now() - startTime;

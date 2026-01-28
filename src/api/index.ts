@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import accountsRouter from './routes/accounts.js';
 import searchRouter from './routes/search.js';
 import analyticsRouter from './routes/analytics.js';
+import configurationsRouter from './routes/configurations.js';
 
 export function createApp(): Express {
   const app = express();
@@ -60,7 +61,7 @@ export function createApp(): Express {
   // API info
   app.get('/api', (_req: Request, res: Response) => {
     res.json({
-      name: 'x402 KOL Finder API',
+      name: 'KOL Finder API',
       version: '1.0.0',
       endpoints: {
         accounts: {
@@ -70,8 +71,17 @@ export function createApp(): Express {
           'PATCH /api/accounts/:id': 'Update account',
           'DELETE /api/accounts/:id': 'Delete account',
         },
+        configurations: {
+          'POST /api/configurations': 'Create search configuration',
+          'GET /api/configurations': 'List configurations',
+          'GET /api/configurations/default': 'Get default configuration',
+          'GET /api/configurations/:id': 'Get configuration by id',
+          'PATCH /api/configurations/:id': 'Update configuration',
+          'DELETE /api/configurations/:id': 'Delete configuration',
+          'POST /api/configurations/:id/set-default': 'Set as default',
+        },
         search: {
-          'POST /api/search/run': 'Trigger search job',
+          'POST /api/search/run': 'Trigger search job (body: { configId, maxPages? })',
           'GET /api/search/status': 'Get search status',
           'GET /api/search/job/:jobId': 'Get job status',
           'GET /api/search/queries': 'Get search history',
@@ -89,6 +99,7 @@ export function createApp(): Express {
 
   // Mount routes
   app.use('/api/accounts', accountsRouter);
+  app.use('/api/configurations', configurationsRouter);
   app.use('/api/search', searchRouter);
   app.use('/api/analytics', analyticsRouter);
 

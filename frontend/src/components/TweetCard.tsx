@@ -18,9 +18,9 @@ export default function TweetCard({ tweet }: TweetCardProps) {
     <div className="bg-white rounded-xl border border-slate-100 p-5 hover:shadow-md transition-all hover:border-slate-200">
       <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{tweet.content}</p>
 
-      {tweet.x402_keywords_found.length > 0 && (
+      {(tweet.keywords_found?.length ?? 0) > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {tweet.x402_keywords_found.map((keyword, idx) => (
+          {tweet.keywords_found!.map((keyword, idx) => (
             <span
               key={idx}
               className="px-2.5 py-1 bg-indigo-50 text-indigo-600 text-xs font-medium rounded-lg"

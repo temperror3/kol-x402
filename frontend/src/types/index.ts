@@ -31,7 +31,7 @@ export interface Tweet {
   created_at: string;
   has_code: boolean;
   has_github: boolean;
-  x402_keywords_found: string[];
+  keywords_found: string[];
 }
 
 export interface PaginatedResponse<T> {
@@ -102,6 +102,35 @@ export interface AccountFilters {
   category?: Category;
   minConfidence?: number;
   hasGithub?: boolean;
+  configId?: string;
   orderBy?: 'ai_confidence' | 'followers_count' | 'created_at' | 'ai_categorized_at';
   orderDir?: 'asc' | 'desc';
 }
+
+export interface SearchConfiguration {
+  id: string;
+  name: string;
+  description?: string;
+  primary_keywords: string[];
+  secondary_keywords: string[];
+  topic_context: string;
+  min_followers: number;
+  min_relevance_score: number;
+  min_tweet_count_30d: number;
+  is_active: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationWithStats extends SearchConfiguration {
+  account_count?: number;
+  kol_count?: number;
+  developer_count?: number;
+  active_user_count?: number;
+}
+
+export type CreateConfigurationInput = Omit<
+  SearchConfiguration,
+  'id' | 'created_at' | 'updated_at'
+> & { is_default?: boolean };

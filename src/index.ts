@@ -42,6 +42,7 @@ async function main(): Promise<void> {
       if (workers) {
         await workers.searchWorker.close();
         await workers.analyzeWorker.close();
+        await workers.secondaryAnalyzeWorker.close();
         logger.info('Workers closed');
 
         // Close queues

@@ -75,7 +75,6 @@ export const AccountModel = {
   ): Promise<PaginatedResponse<Account>> {
     let query = supabase.from('accounts').select('*', { count: 'exact' });
 
-    // Apply filters (AI category only)
     if (filters.aiCategory) {
       query = query.eq('ai_category', filters.aiCategory);
     }
@@ -85,8 +84,18 @@ export const AccountModel = {
     if (filters.hasGithub !== undefined) {
       query = query.eq('has_github', filters.hasGithub);
     }
+    if (filters.configId) {
+      const { data: acRows } = await supabase
+        .from('account_configurations')
+        .select('account_id')
+        .eq('config_id', filters.configId);
+      const accountIds = (acRows || []).map((r: { account_id: string }) => r.account_id);
+      if (accountIds.length === 0) {
+        return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+      }
+      query = query.in('id', accountIds);
+    }
 
-    // Pagination
     const offset = (page - 1) * limit;
     query = query.order(orderBy, { ascending: orderDir === 'asc' }).range(offset, offset + limit - 1);
 
@@ -216,12 +225,13 @@ export const AccountModel = {
     return true;
   },
 
-  // Get accounts needing AI categorization (not categorized yet)
+  // Get accounts needing AI categorization (never run through AI yet).
+  // New accounts have ai_category = 'UNCATEGORIZED' (DB default) and ai_categorized_at = null.
   async getUncategorizedAccounts(limit = 100): Promise<Account[]> {
     const { data, error } = await supabase
       .from('accounts')
       .select('*')
-      .is('ai_category', null)
+      .is('ai_categorized_at', null)
       .limit(limit);
 
     if (error) {
@@ -400,7 +410,7 @@ export const TweetModel = {
       .select('*', { count: 'exact', head: true })
       .eq('account_id', accountId)
       .gte('created_at', thirtyDaysAgo)
-      .not('x402_keywords_found', 'eq', '{}');
+      .not('keywords_found', 'eq', '{}');
 
     if (error) {
       console.error('Error counting x402 tweets:', error);
@@ -411,12 +421,13 @@ export const TweetModel = {
 };
 
 export const SearchQueryModel = {
-  // Log a search query
-  async log(query: string, resultsCount: number): Promise<void> {
+  // Log a search query (optional configId links to search_configurations)
+  async log(query: string, resultsCount: number, configId?: string): Promise<void> {
     await supabase.from('search_queries').insert({
       query,
       results_count: resultsCount,
       last_run_at: new Date().toISOString(),
+      ...(configId && { config_id: configId }),
     });
   },
 

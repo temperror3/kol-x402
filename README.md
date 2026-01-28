@@ -211,10 +211,56 @@ SEARCH_KEYWORDS_PRIMARY=x402
 # CORS (for production)
 ALLOWED_ORIGINS=http://localhost:5173
 
-# Redis (optional)
+# Redis (optional). See "Redis and /api/search/run" below.
 REDIS_URL=redis://localhost:6379
 ENABLE_WORKERS=false
 ```
+
+### Redis and `POST /api/search/run`
+
+**Why Redis is used**
+
+The app uses **BullMQ**, which needs **Redis**, to run background jobs:
+
+1. **Search jobs** – `POST /api/search/run` adds a “discovery” job to the queue (Twitter search + save users/tweets).
+2. **Analyze jobs** – After a search, uncategorized accounts are analyzed by AI; each analysis is a job in a second queue.
+
+So **yes, `/api/search/run` uses Redis** when Redis is available: it enqueues a search job. Workers (started when `ENABLE_WORKERS=true`) then process that queue. If Redis is not running, you get `ECONNREFUSED 127.0.0.1:6379`.
+
+**Ways to avoid the error**
+
+**Option A – Run Redis (recommended if you use workers)**  
+Then `POST /api/search/run` will enqueue jobs and workers can process them.
+
+On macOS with Homebrew:
+
+```bash
+# Install Redis
+brew install redis
+
+# Run in foreground (for a quick test; stop with Ctrl+C)
+redis-server
+
+# Or run as a background service (stays running)
+brew services start redis
+```
+
+Check that it’s up:
+
+```bash
+redis-cli ping   # should print PONG
+```
+
+Use the default URL in `.env`: `REDIS_URL=redis://localhost:6379`. No need to change it if Redis is on localhost:6379.
+
+**Option B – No Redis (in-memory fallback)**  
+If Redis is not installed or not running, the first time you call `POST /api/search/run` the app will try Redis, see the connection error, **switch to in-memory mode**, and run the search in-process. In that mode:
+
+- Only **one** search runs at a time.
+- There are no workers and no separate “analyze” jobs; only the discovery step runs.
+- The handler still returns a `jobId` and you can poll `GET /api/search/status` and `GET /api/search/job/:jobId`.
+
+So you can develop and use `/api/search/run` without Redis; for production or many concurrent jobs, running Redis is better.
 
 ### 5. Run Locally
 

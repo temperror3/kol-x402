@@ -4,16 +4,12 @@
  * Run with: npm run crawl
  *
  * This script performs a full discovery and AI analysis cycle:
- * 1. Search for x402 content on Twitter via RapidAPI
- * 2. Discover and save users
- * 3. For each user, search their specific x402 tweets (in parallel batches)
- * 4. Send tweets to AI (OpenRouter) for categorization (in batches)
- * 5. Store AI category and reasoning in database (in bulk)
- *
- * Performance optimizations:
- * - Parallel data fetching with concurrency control
- * - Batch AI categorization (multiple users per AI request)
- * - Bulk database updates
+ * 1. Load default search configuration (or use DEFAULT_CONFIG_ID env)
+ * 2. Search for topic content on Twitter via RapidAPI
+ * 3. Discover and save users/tweets
+ * 4. For each user, fetch topic tweets + timeline (in parallel batches)
+ * 5. Send to AI (OpenRouter) for categorization (in batches)
+ * 6. Store AI category and reasoning; link accounts to configuration
  */
 
 import { config, validateConfig } from '../config/index.js';
@@ -21,7 +17,7 @@ import { logger } from '../utils/logger.js';
 import { runFullDiscovery } from '../collectors/searchCollector.js';
 import {
   fetchUserDataBatched,
-  searchUserX402Tweets,
+  searchUserTopicTweets,
   fetchUserTimeline,
   delay,
   type UserTweetData,
@@ -32,12 +28,16 @@ import {
   type BatchCategorizationInput,
 } from '../services/openRouterClient.js';
 import { AccountModel } from '../db/account.model.js';
-import type { Account } from '../types/index.js';
+import { ConfigurationModel } from '../db/configuration.model.js';
+import type { Account, SearchConfiguration } from '../types/index.js';
 
 /**
  * Legacy sequential processing mode (for comparison/fallback)
  */
-async function runSequentialCategorization(accounts: Account[]): Promise<{
+async function runSequentialCategorization(
+  accounts: Account[],
+  searchConfig: SearchConfiguration
+): Promise<{
   analyzedCount: number;
   skippedCount: number;
   categoryStats: Record<string, number>;
@@ -51,21 +51,24 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 
   for (const account of accounts) {
     try {
-      // Skip users that already have AI categorization (either category or timestamp set)
       if (account.ai_category || account.ai_categorized_at) {
         logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category || 'pending'}`);
         skippedCount++;
         continue;
       }
 
-      logger.info(`\nAnalyzing @${account.username}...`);
+      logger.info(`\nAnalyzing @${account.username} for ${searchConfig.name}...`);
 
-      const userX402Tweets = await searchUserX402Tweets(account.username, config.search.maxPagesPerUser);
+      const topicTweets = await searchUserTopicTweets(
+        account.username,
+        searchConfig,
+        config.search.maxPagesPerUser
+      );
 
       await delay(config.search.delayMs);
       const generalTimeline = await fetchUserTimeline(account.username, config.search.maxTimelineTweets);
 
-      const aiResult = await categorizeUserEnhanced(account, userX402Tweets, generalTimeline);
+      const aiResult = await categorizeUserEnhanced(account, topicTweets, generalTimeline, searchConfig);
       categoryStats[aiResult.category]++;
 
       await AccountModel.updateAICategoryEnhanced(account.twitter_id, {
@@ -78,6 +81,14 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
         red_flags: aiResult.redFlags,
         primary_topics: aiResult.primaryTopics,
       });
+
+      if (account.id) {
+        await ConfigurationModel.addAccountConfig(account.id, searchConfig.id, {
+          relevance_score: 0,
+          tweet_count_30d: topicTweets.length,
+          keywords_found: [],
+        });
+      }
 
       analyzedCount++;
 
@@ -106,7 +117,10 @@ async function runSequentialCategorization(accounts: Account[]): Promise<{
 /**
  * Optimized batch processing mode
  */
-async function runBatchCategorization(accounts: Account[]): Promise<{
+async function runBatchCategorization(
+  accounts: Account[],
+  searchConfig: SearchConfiguration
+): Promise<{
   analyzedCount: number;
   skippedCount: number;
   categoryStats: Record<string, number>;
@@ -116,7 +130,6 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     UNCATEGORIZED: 0,
   };
 
-  // Filter out already categorized accounts (skip if EITHER category OR timestamp is set)
   const uncategorizedAccounts = accounts.filter((account) => {
     if (account.ai_category || account.ai_categorized_at) {
       logger.info(`Skipping @${account.username} - already categorized as ${account.ai_category || 'pending'}`);
@@ -132,13 +145,12 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     return { analyzedCount: 0, skippedCount, categoryStats };
   }
 
-  logger.info(`\nProcessing ${uncategorizedAccounts.length} uncategorized accounts in batches...`);
+  logger.info(`\nProcessing ${uncategorizedAccounts.length} uncategorized accounts for ${searchConfig.name}...`);
   logger.info(`Batch settings:`);
   logger.info(`  - Data fetch concurrency: ${config.batch.dataFetchConcurrency}`);
   logger.info(`  - Data fetch batch size: ${config.batch.dataFetchBatchSize}`);
   logger.info(`  - AI categorization batch size: ${config.batch.aiCategorizationBatchSize}`);
 
-  // Step 1: Fetch tweet data for all accounts in parallel batches
   logger.info('\n--- Step 1: Fetching tweet data ---');
   const usernames = uncategorizedAccounts.map((a) => a.username);
 
@@ -146,22 +158,20 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     batchSize: config.batch.dataFetchBatchSize,
     maxConcurrentPerBatch: config.batch.dataFetchConcurrency,
     delayBetweenBatches: config.batch.dataFetchBatchDelay,
+    searchConfig,
     onBatchComplete: (batchNum, totalBatches, results) => {
       const successCount = results.filter((r) => !r.error).length;
       logger.info(`Batch ${batchNum}/${totalBatches} complete: ${successCount}/${results.length} successful`);
     },
   });
 
-  // Create a map of username -> user data for easy lookup
   const userDataMap = new Map<string, UserTweetData>();
   for (const userData of userDataResults) {
     userDataMap.set(userData.username.toLowerCase(), userData);
   }
 
-  // Step 2: AI categorization in batches
   logger.info('\n--- Step 2: AI Categorization ---');
 
-  // Prepare batch inputs
   const batchInputs: BatchCategorizationInput[] = uncategorizedAccounts.map((account) => {
     const userData = userDataMap.get(account.username.toLowerCase());
     return {
@@ -171,13 +181,12 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
     };
   });
 
-  // Process in AI batches
   const categorizationResults = await categorizeUsersBatch(
     batchInputs,
+    searchConfig,
     config.batch.aiCategorizationBatchSize
   );
 
-  // Step 3: Bulk update database
   logger.info('\n--- Step 3: Saving results to database ---');
 
   const dbUpdates = categorizationResults.map((result) => ({
@@ -194,6 +203,23 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
 
   const { success, failed } = await AccountModel.bulkUpdateAICategoryEnhanced(dbUpdates);
   logger.info(`Database updates: ${success} successful, ${failed} failed`);
+
+  const accountConfigInserts = categorizationResults
+    .map((r, i) => ({
+      result: r,
+      topicCount: batchInputs[i]?.x402Tweets?.length ?? 0,
+    }))
+    .filter(({ result }) => result.account.id)
+    .map(({ result, topicCount }) => ({
+      account_id: result.account.id!,
+      config_id: searchConfig.id,
+      relevance_score: 0,
+      tweet_count_30d: topicCount,
+      keywords_found: [] as string[],
+    }));
+  if (accountConfigInserts.length > 0) {
+    await ConfigurationModel.bulkUpsertAccountConfigs(accountConfigInserts);
+  }
 
   // Calculate category stats
   for (const result of categorizationResults) {
@@ -219,38 +245,48 @@ async function runBatchCategorization(accounts: Account[]): Promise<{
 
 async function runCrawl(): Promise<void> {
   logger.info('='.repeat(50));
-  logger.info('Starting x402 KOL Discovery Crawl with AI Categorization');
+  logger.info('Starting KOL Discovery Crawl with AI Categorization');
   logger.info('='.repeat(50));
 
   try {
-    // Validate config
     validateConfig();
     logger.info('Configuration validated');
+
+    const configId = process.env.DEFAULT_CONFIG_ID ?? null;
+    const searchConfig = configId
+      ? await ConfigurationModel.getById(configId)
+      : await ConfigurationModel.getDefault();
+
+    if (!searchConfig) {
+      logger.error(
+        'No search configuration found. Set DEFAULT_CONFIG_ID or create a default config via the API (e.g. POST /api/configurations).'
+      );
+      process.exit(1);
+    }
+
+    logger.info(`Using config: ${searchConfig.name} (${searchConfig.id})`);
     logger.info(`Max pages per keyword: ${config.search.maxPages}`);
     logger.info(`Max pages per user: ${config.search.maxPagesPerUser}`);
     logger.info(`Delay between requests: ${config.search.delayMs}ms`);
     logger.info(`AI Model: ${config.openRouter.model}`);
     logger.info(`Parallel processing: ${config.batch.enableParallelProcessing ? 'ENABLED' : 'DISABLED'}`);
 
-    // Step 1: Initial discovery - search for x402 keywords to find users
     logger.info('\n' + '-'.repeat(50));
-    logger.info('Step 1: Initial Discovery - Searching for x402 content...');
+    logger.info(`Step 1: Initial Discovery - Searching for ${searchConfig.name} content...`);
     logger.info('-'.repeat(50));
-    const keywords = [...config.searchKeywords.primary, ...config.searchKeywords.secondary];
+    const keywords = [...searchConfig.primary_keywords, ...(searchConfig.secondary_keywords || [])];
     logger.info(`Keywords: ${keywords.join(', ')}`);
 
-    const discoveryResult = await runFullDiscovery(keywords, config.search.maxPages);
+    const discoveryResult = await runFullDiscovery(searchConfig, config.search.maxPages);
 
     logger.info(`Discovery complete: ${discoveryResult.usersCreated} new users, ${discoveryResult.usersUpdated} updated, ${discoveryResult.tweetsSaved} tweets saved`);
 
-    // Step 2: Get all discovered accounts for AI analysis
     logger.info('\n' + '-'.repeat(50));
     logger.info('Step 2: AI Categorization - Analyzing each user...');
     logger.info('-'.repeat(50));
 
     const { data: accounts } = await AccountModel.list({}, 1, 10000, 'created_at', 'desc');
 
-    // Choose processing mode based on config
     let result: {
       analyzedCount: number;
       skippedCount: number;
@@ -261,10 +297,10 @@ async function runCrawl(): Promise<void> {
 
     if (config.batch.enableParallelProcessing) {
       logger.info('Using OPTIMIZED batch processing mode');
-      result = await runBatchCategorization(accounts);
+      result = await runBatchCategorization(accounts, searchConfig);
     } else {
       logger.info('Using LEGACY sequential processing mode');
-      result = await runSequentialCategorization(accounts);
+      result = await runSequentialCategorization(accounts, searchConfig);
     }
 
     const elapsedTime = Date.now() - startTime;

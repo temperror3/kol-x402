@@ -1,39 +1,66 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { triggerSearch, getSearchQueue } from '../../jobs/crawlQueue.js';
+import {
+  triggerSearch,
+  getSearchQueue,
+  isMemoryMode,
+  getInMemorySearchStatus,
+  getInMemorySearchJob,
+  SearchInProgressError,
+} from '../../jobs/crawlQueue.js';
 import { SearchQueryModel } from '../../db/account.model.js';
+import { ConfigurationModel } from '../../db/configuration.model.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
 
-// Search request schema
 const searchRequestSchema = z.object({
-  keywords: z.array(z.string()).optional(),
+  configId: z.string().uuid().optional(),
   maxPages: z.number().int().positive().max(20).optional(),
 });
 
 /**
  * POST /api/search/run
- * Trigger a new search job
+ * Trigger a new search job. Uses configId to select configuration; if omitted, uses default.
  */
 router.post('/run', async (req: Request, res: Response) => {
   try {
     const body = searchRequestSchema.parse(req.body);
 
-    const keywords = body.keywords || [
-      ...config.searchKeywords.primary,
-      ...config.searchKeywords.secondary,
-    ];
-    const maxPages = body.maxPages || config.search.maxPages;
+    const searchConfig = body.configId
+      ? await ConfigurationModel.getById(body.configId)
+      : await ConfigurationModel.getDefault();
 
-    const jobId = await triggerSearch(keywords, maxPages);
+    if (!searchConfig) {
+      res.status(400).json({
+        error: body.configId
+          ? 'Configuration not found'
+          : 'No default configuration. Create one via POST /api/configurations or set one as default.',
+      });
+      return;
+    }
+
+    const maxPages = body.maxPages ?? config.search.maxPages;
+    let jobId: string;
+    let alreadyRunning = false;
+    try {
+      jobId = await triggerSearch(searchConfig.id, maxPages);
+    } catch (err) {
+      if (err instanceof SearchInProgressError) {
+        jobId = err.jobId;
+        alreadyRunning = true;
+      } else {
+        throw err;
+      }
+    }
 
     res.json({
       success: true,
       jobId,
-      message: 'Search job queued',
-      keywords,
+      message: alreadyRunning ? 'Search already in progress' : 'Search job queued',
+      configId: searchConfig.id,
+      configName: searchConfig.name,
       maxPages,
     });
   } catch (error) {
@@ -52,6 +79,10 @@ router.post('/run', async (req: Request, res: Response) => {
  */
 router.get('/status', async (req: Request, res: Response) => {
   try {
+    if (isMemoryMode()) {
+      const status = getInMemorySearchStatus();
+      return res.json(status);
+    }
     const queue = getSearchQueue();
 
     const [waiting, active, completed, failed] = await Promise.all([
@@ -95,6 +126,13 @@ router.get('/status', async (req: Request, res: Response) => {
  */
 router.get('/job/:jobId', async (req: Request, res: Response) => {
   try {
+    if (isMemoryMode()) {
+      const job = getInMemorySearchJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      return res.json(job);
+    }
     const queue = getSearchQueue();
     const job = await queue.getJob(req.params.jobId);
 
@@ -146,9 +184,23 @@ router.get('/queries', async (req: Request, res: Response) => {
 
 /**
  * GET /api/search/keywords
- * Get configured search keywords
+ * Get configured search keywords (from default config if available, else env)
  */
 router.get('/keywords', async (_req: Request, res: Response) => {
+  try {
+    const defaultConfig = await ConfigurationModel.getDefault();
+    if (defaultConfig) {
+      return res.json({
+        primary: defaultConfig.primary_keywords,
+        secondary: defaultConfig.secondary_keywords || [],
+        all: [...defaultConfig.primary_keywords, ...(defaultConfig.secondary_keywords || [])],
+        configId: defaultConfig.id,
+        configName: defaultConfig.name,
+      });
+    }
+  } catch (_) {
+    // fallback to env
+  }
   res.json({
     primary: config.searchKeywords.primary,
     secondary: config.searchKeywords.secondary,

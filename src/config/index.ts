@@ -23,23 +23,24 @@ export const config = {
     host: process.env.RAPIDAPI_HOST || 'twitter-api45.p.rapidapi.com',
   },
 
-  // Search keywords (comma-separated in env)
+  // Fallback keywords when no search_configurations exist (e.g. legacy env)
+  // Prefer creating configurations via API/dashboard for topic-driven discovery.
+  defaultConfigId: process.env.DEFAULT_CONFIG_ID || null,
   searchKeywords: {
-    primary: (process.env.SEARCH_KEYWORDS_PRIMARY || 'x402,#x402,x402 protocol,HTTP 402')
+    primary: (process.env.SEARCH_KEYWORDS_PRIMARY || '')
       .split(',')
       .map((k) => k.trim())
       .filter((k) => k.length > 0),
-    // secondary: (process.env.SEARCH_KEYWORDS_SECONDARY || '402 payment,crypto payments API,web monetization')
-    //   .split(',')
-    //   .map((k) => k.trim())
-    //   .filter((k) => k.length > 0),
-    secondary: [],
+    secondary: (process.env.SEARCH_KEYWORDS_SECONDARY || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0),
   },
 
   // Search settings
   search: {
-    maxPages: parseInt(process.env.SEARCH_MAX_PAGES || '5', 10),
-    maxPagesPerUser: parseInt(process.env.SEARCH_MAX_PAGES_PER_USER || '3', 10),
+    maxPages: parseInt(process.env.SEARCH_MAX_PAGES || '1', 10),
+    maxPagesPerUser: parseInt(process.env.SEARCH_MAX_PAGES_PER_USER || '2', 10),
     delayMs: parseInt(process.env.SEARCH_DELAY_MS || '2000', 10),
     searchType: process.env.SEARCH_TYPE || 'Top',
     maxTimelineTweets: parseInt(process.env.MAX_TIMELINE_TWEETS || '50', 10),

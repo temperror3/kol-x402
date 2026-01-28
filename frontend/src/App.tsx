@@ -5,6 +5,7 @@ import AccountsList from './pages/AccountsList';
 import AccountDetail from './pages/AccountDetail';
 import Analytics from './pages/Analytics';
 import Outreach from './pages/Outreach';
+import Configurations from './pages/Configurations';
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="accounts" element={<AccountsList />} />
           <Route path="accounts/:id" element={<AccountDetail />} />
+          <Route path="configurations" element={<Configurations />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="outreach" element={<Outreach />} />
         </Route>

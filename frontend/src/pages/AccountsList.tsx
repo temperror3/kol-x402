@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getAccounts } from '../api/client';
+import { getAccounts, getDefaultConfiguration } from '../api/client';
 import type { Account, Category, PaginatedResponse, AccountFilters } from '../types';
 import AccountTable from '../components/AccountTable';
 import Pagination from '../components/Pagination';
+import ConfigurationSelector from '../components/ConfigurationSelector';
 
 export default function AccountsList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -15,8 +16,15 @@ export default function AccountsList() {
   const category = searchParams.get('category') as Category | null;
   const minConfidence = searchParams.get('minConfidence');
   const hasGithub = searchParams.get('hasGithub');
+  const configIdParam = searchParams.get('configId');
+  const configId = configIdParam === 'all' || !configIdParam ? undefined : configIdParam;
   const orderBy = searchParams.get('orderBy') as AccountFilters['orderBy'] || 'ai_confidence';
   const orderDir = searchParams.get('orderDir') as 'asc' | 'desc' || 'desc';
+
+  const [defaultConfigId, setDefaultConfigId] = useState<string | null>(null);
+  useEffect(() => {
+    getDefaultConfiguration().then((c) => c && setDefaultConfigId(c.id));
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -26,6 +34,7 @@ export default function AccountsList() {
           category: category || undefined,
           minConfidence: minConfidence ? parseFloat(minConfidence) : undefined,
           hasGithub: hasGithub ? hasGithub === 'true' : undefined,
+          configId,
           orderBy,
           orderDir,
         };
@@ -39,7 +48,7 @@ export default function AccountsList() {
       }
     }
     fetchData();
-  }, [page, category, minConfidence, hasGithub, orderBy, orderDir]);
+  }, [page, category, minConfidence, hasGithub, configIdParam, configId, orderBy, orderDir]);
 
   const updateFilter = (key: string, value: string | null) => {
     const newParams = new URLSearchParams(searchParams);
@@ -51,6 +60,8 @@ export default function AccountsList() {
     newParams.set('page', '1');
     setSearchParams(newParams);
   };
+
+  const effectiveConfigId = configIdParam === 'all' ? null : (configId ?? defaultConfigId);
 
   const handleSort = (field: string) => {
     if (orderBy === field) {
@@ -70,7 +81,7 @@ export default function AccountsList() {
     setSearchParams(newParams);
   };
 
-  const activeFiltersCount = [category, minConfidence, hasGithub].filter(Boolean).length;
+  const activeFiltersCount = [category, minConfidence, hasGithub, configIdParam].filter(Boolean).length;
 
   return (
     <div className="space-y-6">
@@ -102,6 +113,14 @@ export default function AccountsList() {
         </div>
 
         <div className="flex flex-wrap gap-4">
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-sm font-medium text-slate-600 mb-2">Configuration</label>
+            <ConfigurationSelector
+              value={effectiveConfigId}
+              onChange={(id) => updateFilter('configId', id === null ? 'all' : id)}
+              showAllOption
+            />
+          </div>
           <div className="flex-1 min-w-[180px]">
             <label className="block text-sm font-medium text-slate-600 mb-2">Category</label>
             <select

@@ -61,8 +61,8 @@ export async function collectX402EngagementData(accountId: string): Promise<{
 }> {
   const tweets = await TweetModel.getRecentByAccountId(accountId);
 
-  // Filter tweets with x402 keywords
-  const x402Tweets = tweets.filter((t) => t.x402_keywords_found && t.x402_keywords_found.length > 0);
+  // Filter tweets with topic keywords (topic-agnostic)
+  const x402Tweets = tweets.filter((t) => t.keywords_found && t.keywords_found.length > 0);
 
   const x402TweetCount = x402Tweets.length;
   const x402Engagement = x402Tweets.reduce(

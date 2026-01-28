@@ -1,7 +1,8 @@
 import { OpenRouter } from '@openrouter/sdk';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import type { Account, AICategoryResult, EnhancedAICategoryResult, RedFlag } from '../types/index.js';
+import { PromptBuilder } from '../utils/promptTemplates.js';
+import type { Account, AICategoryResult, EnhancedAICategoryResult, RedFlag, SearchConfiguration } from '../types/index.js';
 import type { RapidApiTweet } from '../collectors/rapidApiClient.js';
 
 let openRouterClient: OpenRouter | null = null;
@@ -15,163 +16,8 @@ function getClient(): OpenRouter {
   return openRouterClient;
 }
 
-const SYSTEM_PROMPT = `You are an expert analyst categorizing Twitter/X users based on their x402-related activity.
-
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
-
-Goal: identify GOOD KOLs (Key Opinion Leaders) who are independent analysts, NOT product promoters.
-
-Hard exclusions (always UNCATEGORIZED):
-- Founder/CEO/co-founder/employee in bio, or official project/company account
-- Primarily promotes their own product, project, token, or company
-
-Signals of a GOOD KOL:
-- Original analysis, critiques, or frameworks about crypto markets, infra, or payments
-- Explains why something matters, highlights tradeoffs, uses data or concrete examples
-- Consistent, thoughtful commentary beyond price-only hype
-- Strong opinions are OK if backed by reasoning
-
-Weak/low-quality signals:
-- Pure hype, memes only, or short price calls with no reasoning
-- Engagement farming (like/RT/follow to win), shilling, or templated posts
-- Mostly retweets or announcements
-- Heavy referral/affiliate/giveaway content or token-gated club promos
-
-When in doubt, choose UNCATEGORIZED.
-
-Consider engagement metrics as secondary support only.
-If there is too little signal (e.g., 1-2 shallow tweets), choose UNCATEGORIZED.
-
-Respond ONLY with valid JSON in this exact format:
-{
-  "category": "KOL" | "UNCATEGORIZED",
-  "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of why this category was chosen, mentioning key engagement metrics if relevant"
-}`;
-// Note: DEVELOPER and ACTIVE_USER categories commented out - focusing on KOL only for now
-
-const ENHANCED_SYSTEM_PROMPT = `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
-
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
-
-PRIMARY RULE: A KOL must be independent. If the bio says Founder/CEO/Co-founder, "building X", "core team", or shows they work at a project, they are NOT a KOL.
-KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT required if their broader content is high-signal.
-
-## Hard Exclusions (always UNCATEGORIZED)
-- Founder/CEO/co-founder/employee in bio or clearly tied to a project
-- Official project/company accounts
-- Mostly promotional content, product launch updates, "we just shipped"
-- Paid shilling or constant token pumping
-
-## What GOOD KOL content looks like
-- Opinionated analysis and critiques of market behavior or narratives
-- Explains mechanisms or tradeoffs (e.g., liquidity gaps vs normal volatility)
-- Uses concrete data (market cap, holders, revenue, adoption metrics)
-- Shares playbooks or frameworks WITHOUT selling a product
-- Can be blunt or strongly worded, but still analytical
-
-## What is NOT a KOL
-- Price-only hype, "moon" talk, or meme-only accounts
-- News aggregators who repost without analysis
-- Engagement farming ("like/RT/follow to win", giveaways)
-- Accounts dominated by shilling a single project
-
-## Scoring Criteria (0.0 - 1.0 each)
-
-### topicConsistencyScore
-Does the user regularly discuss crypto payments/web3 monetization with substance?
-- 0.75+: Consistent, high-signal analysis or education
-- 0.55-0.74: Regular relevant content mixed with other topics
-- <0.55: Rare or shallow mentions, mostly promotional
-
-### contentDepthScore
-Does the content show REAL KNOWLEDGE and provide VALUE?
-- 0.75+: Original analysis, technical explanations, market structure, clear reasoning
-- 0.6-0.74: Useful perspectives, some original insight
-- <0.6: Surface-level takes, hype, promotional language, no insight
-
-### topicFocusScore
-Is this person a focused EXPERT voice, not a generalist or promoter?
-- 0.7+: Focused independent analyst on crypto payments/monetization
-- 0.6-0.69: Broader crypto/fintech focus with genuine expertise
-- <0.6: Too scattered or primarily self-promotional
-
-## Red Flags (auto-disqualify if high severity)
-- company_founder: Bio includes founder/CEO/co-founder
-- company_employee: Bio says team/core/employee/BD/marketing at a project
-- corporate_account: Official project/company account or announcements
-- referral_affiliate: Referral codes, affiliate links, token-gated club (high severity if dominant/pinned)
-- engagement_farming: Giveaways, "like/RT/follow to win" (high severity if dominant/pinned)
-- shill_behavior: Paid promos, constant token pumping
-- only_retweets: No original content
-- low_quality_content: Emojis only, memes only, no reasoning
-
-## KOL Decision (STRICT, but allow true analysts)
-Classify as KOL if ALL are true:
-- Independent (no founder/CEO/employee ties)
-- No high-severity red flags
-- contentDepthScore >= 0.7
-- topicFocusScore >= 0.6
-- AND one of:
-  - topicConsistencyScore >= 0.6, OR
-  - contentDepthScore >= 0.7 with at least 3 substantive tweets
-
-When in doubt, classify as UNCATEGORIZED. We want QUALITY over quantity.
-
-Respond ONLY with valid JSON:
-{
-  "category": "KOL" | "UNCATEGORIZED",
-  "confidence": 0.0-1.0,
-  "reasoning": "2-3 sentences explaining decision. If excluded, explain why (founder, promotional, etc.)",
-  "topicConsistencyScore": 0.0-1.0,
-  "contentDepthScore": 0.0-1.0,
-  "topicFocusScore": 0.0-1.0,
-  "redFlags": [{ "type": "...", "description": "...", "severity": "low|medium|high" }],
-  "primaryTopics": ["topic1", "topic2"]
-}`;
-
-const SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
-
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
-
-IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
-Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
-
-## Category Definitions
-
-### DEVELOPER
-Personal account showing clear evidence of building or contributing to software.
-Strong signals include:
-- Code snippets, technical threads, build logs, or architecture discussions
-- GitHub links, repos, PRs, SDKs, APIs, open-source contributions
-- Role signals like "engineer", "developer", "builder", "infra", "backend"
-
-### ACTIVE_USER
-Non-developer who actively uses or experiments with x402/crypto payment APIs.
-Signals include:
-- Describing real usage, integrations, demos, or feedback
-- Asking/answering practical questions about using the protocol
-- Sharing results, learnings, or issues from using x402/related APIs
-- Active users is not a company founder or the CEO
-
-### UNCATEGORIZED
-Use when there is insufficient evidence, or the account is:
-- A company/brand/official account
-- Purely promotional, marketing, or hype-driven
-- Mostly memes/retweets/engagement farming
-- Not clearly related to x402 or crypto payments usage/building
-
-Decision rules:
-- Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
-- Require at least 2 concrete signals; otherwise choose UNCATEGORIZED.
-- When in doubt, choose UNCATEGORIZED.
-
-Respond ONLY with valid JSON:
-{
-  "category": "DEVELOPER" | "ACTIVE_USER" | "UNCATEGORIZED",
-  "confidence": 0.0-1.0,
-  "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
-}`;
+// Hardcoded prompts removed - now using PromptBuilder for dynamic generation
+// See src/utils/promptTemplates.ts
 
 function formatTweets(tweets: RapidApiTweet[]): string {
   return tweets
@@ -298,11 +144,12 @@ function parseAIResponse(content: string): AICategoryResult {
 }
 
 /**
- * Categorize a user based on their x402 tweets using AI
+ * Categorize a user based on their topic-related tweets using AI
  */
 export async function categorizeUserWithAI(
   account: Account,
-  tweets: RapidApiTweet[]
+  tweets: RapidApiTweet[],
+  searchConfig: SearchConfiguration
 ): Promise<AICategoryResult> {
   const client = getClient();
 
@@ -311,20 +158,22 @@ export async function categorizeUserWithAI(
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
-      reasoning: 'No x402-related tweets found for this user',
+      reasoning: `No ${searchConfig.name}-related tweets found for this user`,
     };
   }
 
-  const userPrompt = buildUserPrompt(account, tweets);
+  // Use PromptBuilder for dynamic prompts
+  const systemPrompt = PromptBuilder.buildPrimarySystemPrompt(searchConfig);
+  const userPrompt = PromptBuilder.buildUserPrompt(account, tweets, searchConfig);
 
   try {
-    logger.info(`Categorizing @${account.username} with AI (${tweets.length} tweets)`);
+    logger.info(`Categorizing @${account.username} for ${searchConfig.name} with AI (${tweets.length} tweets)`);
 
     // Use streaming to get the response
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -578,13 +427,14 @@ function parseSecondaryAIResponse(content: string): AICategoryResult {
  */
 export async function categorizeUserEnhanced(
   account: Account,
-  x402Tweets: RapidApiTweet[],
-  generalTweets: RapidApiTweet[]
+  topicTweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[],
+  searchConfig: SearchConfiguration
 ): Promise<EnhancedAICategoryResult> {
   const client = getClient();
 
   // If no tweets at all, return uncategorized
-  if (x402Tweets.length === 0 && generalTweets.length === 0) {
+  if (topicTweets.length === 0 && generalTweets.length === 0) {
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
@@ -597,18 +447,24 @@ export async function categorizeUserEnhanced(
     };
   }
 
-  const userPrompt = buildEnhancedUserPrompt(account, x402Tweets, generalTweets);
+  // Use PromptBuilder to generate prompts dynamically based on configuration
+  const systemPrompt = PromptBuilder.buildEnhancedSystemPrompt(searchConfig);
+  const userPrompt = PromptBuilder.buildUserPrompt(
+    account,
+    [...topicTweets, ...generalTweets],
+    searchConfig
+  );
 
   try {
     logger.info(
-      `Enhanced categorizing @${account.username} (${x402Tweets.length} x402 tweets, ${generalTweets.length} timeline tweets)`
+      `Enhanced categorizing @${account.username} for ${searchConfig.name} (${topicTweets.length} topic tweets, ${generalTweets.length} timeline tweets)`
     );
 
     // Use streaming to get the response
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: ENHANCED_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -658,12 +514,13 @@ export async function categorizeUserEnhanced(
  */
 export async function categorizeUserForSecondaryCategories(
   account: Account,
-  x402Tweets: RapidApiTweet[],
-  generalTweets: RapidApiTweet[]
+  topicTweets: RapidApiTweet[],
+  generalTweets: RapidApiTweet[],
+  searchConfig: SearchConfiguration
 ): Promise<AICategoryResult> {
   const client = getClient();
 
-  if (x402Tweets.length === 0 && generalTweets.length === 0) {
+  if (topicTweets.length === 0 && generalTweets.length === 0) {
     return {
       category: 'UNCATEGORIZED',
       confidence: 0,
@@ -671,17 +528,23 @@ export async function categorizeUserForSecondaryCategories(
     };
   }
 
-  const userPrompt = buildSecondaryUserPrompt(account, x402Tweets, generalTweets);
+  // Use PromptBuilder for dynamic secondary categorization prompts
+  const systemPrompt = PromptBuilder.buildSecondarySystemPrompt(searchConfig);
+  const userPrompt = PromptBuilder.buildUserPrompt(
+    account,
+    [...topicTweets, ...generalTweets],
+    searchConfig
+  );
 
   try {
     logger.info(
-      `Secondary categorizing @${account.username} (${x402Tweets.length} x402 tweets, ${generalTweets.length} timeline tweets)`
+      `Secondary categorizing @${account.username} for ${searchConfig.name} (${topicTweets.length} topic tweets, ${generalTweets.length} timeline tweets)`
     );
 
     const stream = await client.chat.send({
       model: config.openRouter.model,
       messages: [
-        { role: 'system', content: SECONDARY_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       stream: true,
@@ -742,53 +605,8 @@ export interface SecondaryBatchCategorizationResult {
   error?: string;
 }
 
-const BATCH_SECONDARY_SYSTEM_PROMPT = `You are an expert analyst classifying previously-uncategorized Twitter/X accounts for the x402 ecosystem.
-
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
-
-IMPORTANT: These accounts were already reviewed for KOL quality and were NOT KOLs.
-Do NOT return KOL. Only choose from: DEVELOPER, ACTIVE_USER, UNCATEGORIZED.
-
-## Category Definitions
-
-### DEVELOPER
-Personal account showing clear evidence of building or contributing to software.
-Strong signals include:
-- Code snippets, technical threads, build logs, or architecture discussions
-- GitHub links, repos, PRs, SDKs, APIs, open-source contributions
-- Role signals like "engineer", "developer", "builder", "infra", "backend"
-
-### ACTIVE_USER
-Non-developer who actively uses or experiments with x402/crypto payment APIs.
-Signals include:
-- Describing real usage, integrations, demos, or feedback
-- Asking/answering practical questions about using the protocol
-- Sharing results, learnings, or issues from using x402/related APIs
-- Active users is not a company founder or the CEO
-
-### UNCATEGORIZED
-Use when there is insufficient evidence, or the account is:
-- A company/brand/official account
-- Purely promotional, marketing, or hype-driven
-- Mostly memes/retweets/engagement farming
-- Not clearly related to x402 or crypto payments usage/building
-
-Decision rules:
-- Prefer DEVELOPER over ACTIVE_USER if strong dev evidence exists.
-- Require at least 2 concrete signals; otherwise choose UNCATEGORIZED.
-- When in doubt, choose UNCATEGORIZED.
-
-You will receive multiple users to analyze in a single request. Analyze each user independently and return a JSON array with results for each user.
-
-Respond ONLY with a valid JSON array:
-[
-  {
-    "username": "@username",
-    "category": "DEVELOPER" | "ACTIVE_USER" | "UNCATEGORIZED",
-    "confidence": 0.0-1.0,
-    "reasoning": "1-2 sentences citing the strongest evidence from the bio or tweets"
-  }
-]`;
+// TODO: Update batch functions to use PromptBuilder.buildBatchSecondarySystemPrompt(searchConfig)
+// For now, keeping legacy batch categorization - needs refactoring to accept SearchConfiguration
 
 /**
  * Build batch user prompt for secondary categorization
@@ -871,6 +689,7 @@ function parseBatchSecondaryAIResponse(content: string): Map<string, AICategoryR
 async function processSecondaryBatchWithRetry(
   client: OpenRouter,
   usersWithTweets: BatchCategorizationInput[],
+  searchConfig: SearchConfiguration,
   batchNumber: number,
   maxRetries: number = 5,
   retryDelay: number = 2000
@@ -880,14 +699,17 @@ async function processSecondaryBatchWithRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      logger.info(`Secondary batch categorizing ${usersWithTweets.length} users (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
+      logger.info(`Secondary batch categorizing ${usersWithTweets.length} users for ${searchConfig.name} (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
 
       const userPrompt = buildBatchSecondaryUserPrompt(usersWithTweets);
+
+      // Use PromptBuilder for dynamic batch prompts
+      const systemPrompt = PromptBuilder.buildBatchSecondarySystemPrompt(searchConfig);
 
       const stream = await client.chat.send({
         model: config.openRouter.model,
         messages: [
-          { role: 'system', content: BATCH_SECONDARY_SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
         stream: true,
@@ -992,6 +814,7 @@ async function processSecondaryBatchWithRetry(
  * Includes retry logic for failed batches
  *
  * @param inputs Array of accounts with their tweets
+ * @param searchConfig Search configuration for dynamic prompts
  * @param maxBatchSize Maximum number of users to process in a single AI request (default: 5)
  * @param maxRetries Maximum number of retries for failed batches (default: 3)
  * @param retryDelay Base delay between retries in ms (default: 2000)
@@ -999,6 +822,7 @@ async function processSecondaryBatchWithRetry(
  */
 export async function categorizeUsersSecondaryBatch(
   inputs: BatchCategorizationInput[],
+  searchConfig: SearchConfiguration,
   maxBatchSize: number = 5,
   maxRetries: number = config.batch.aiRetryCount,
   retryDelay: number = config.batch.aiRetryDelay
@@ -1041,6 +865,7 @@ export async function categorizeUsersSecondaryBatch(
     const batchResults = await processSecondaryBatchWithRetry(
       client,
       usersWithTweets,
+      searchConfig,
       batchNumber,
       maxRetries,
       retryDelay
@@ -1052,90 +877,8 @@ export async function categorizeUsersSecondaryBatch(
   return allResults;
 }
 
-const BATCH_SYSTEM_PROMPT = `You are an expert analyst finding genuine crypto/web3 KEY OPINION LEADERS (KOLs) - independent voices who provide valuable insights, NOT company promoters.
-
-x402 is a crypto payment protocol that enables HTTP 402 Payment Required responses for API monetization.
-
-PRIMARY RULE: A KOL must be independent. If the bio says Founder/CEO/Co-founder, "building X", "core team", or shows they work at a project, they are NOT a KOL.
-KOLs can be broader crypto/web3 analysts; x402 mentions are helpful but NOT required if their broader content is high-signal.
-
-## Hard Exclusions (always UNCATEGORIZED)
-- Founder/CEO/co-founder/employee in bio or clearly tied to a project
-- Official project/company accounts
-- Mostly promotional content, product launch updates, "we just shipped"
-- Paid shilling or constant token pumping
-
-## What GOOD KOL content looks like
-- Opinionated analysis and critiques of market behavior or narratives
-- Explains mechanisms or tradeoffs (e.g., liquidity gaps vs normal volatility)
-- Uses concrete data (market cap, holders, revenue, adoption metrics)
-- Shares playbooks or frameworks WITHOUT selling a product
-- Can be blunt or strongly worded, but still analytical
-
-## What is NOT a KOL
-- Price-only hype, "moon" talk, or meme-only accounts
-- News aggregators who repost without analysis
-- Engagement farming ("like/RT/follow to win", giveaways)
-- Accounts dominated by shilling a single project
-
-## Scoring Criteria (0.0 - 1.0 each)
-
-### topicConsistencyScore
-Does the user regularly discuss crypto payments/web3 monetization with substance?
-- 0.75+: Consistent, high-signal analysis or education
-- 0.55-0.74: Regular relevant content mixed with other topics
-- <0.55: Rare or shallow mentions, mostly promotional
-
-### contentDepthScore
-Does the content show REAL KNOWLEDGE and provide VALUE?
-- 0.75+: Original analysis, technical explanations, market structure, clear reasoning
-- 0.6-0.74: Useful perspectives, some original insight
-- <0.6: Surface-level takes, hype, promotional language, no insight
-
-### topicFocusScore
-Is this person a focused EXPERT voice, not a generalist or promoter?
-- 0.7+: Focused independent analyst on crypto payments/monetization
-- 0.6-0.69: Broader crypto/fintech focus with genuine expertise
-- <0.6: Too scattered or primarily self-promotional
-
-## Red Flags (auto-disqualify if high severity)
-- company_founder: Bio includes founder/CEO/co-founder
-- company_employee: Bio says team/core/employee/BD/marketing at a project
-- corporate_account: Official project/company account or announcements
-- referral_affiliate: Referral codes, affiliate links, token-gated club (high severity if dominant/pinned)
-- engagement_farming: Giveaways, "like/RT/follow to win" (high severity if dominant/pinned)
-- shill_behavior: Paid promos, constant token pumping
-- only_retweets: No original content
-- low_quality_content: Emojis only, memes only, no reasoning
-
-## KOL Decision (STRICT, but allow true analysts)
-Classify as KOL if ALL are true:
-- Independent (no founder/CEO/employee ties)
-- No high-severity red flags
-- contentDepthScore >= 0.7
-- topicFocusScore >= 0.6
-- AND one of:
-  - topicConsistencyScore >= 0.6, OR
-  - contentDepthScore >= 0.7 with at least 3 substantive tweets
-
-When in doubt, classify as UNCATEGORIZED. We want QUALITY over quantity.
-
-You will receive multiple users to analyze in a single request. Analyze each user independently and return a JSON array with results for each user.
-
-Respond ONLY with a valid JSON array:
-[
-  {
-    "username": "@username",
-    "category": "KOL" | "UNCATEGORIZED",
-    "confidence": 0.0-1.0,
-    "reasoning": "2-3 sentences explaining decision",
-    "topicConsistencyScore": 0.0-1.0,
-    "contentDepthScore": 0.0-1.0,
-    "topicFocusScore": 0.0-1.0,
-    "redFlags": [{ "type": "...", "description": "...", "severity": "low|medium|high" }],
-    "primaryTopics": ["topic1", "topic2"]
-  }
-]`;
+// TODO: Update primary batch functions to use PromptBuilder.buildBatchSystemPrompt(searchConfig)
+// For now keeping legacy - needs refactoring to accept SearchConfiguration
 
 /**
  * Build batch user prompt for multiple users
@@ -1272,6 +1015,7 @@ function delay(ms: number): Promise<void> {
 async function processBatchWithRetry(
   client: OpenRouter,
   usersWithTweets: BatchCategorizationInput[],
+  searchConfig: SearchConfiguration,
   batchNumber: number,
   maxRetries: number = 5,
   retryDelay: number = 2000
@@ -1281,14 +1025,17 @@ async function processBatchWithRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      logger.info(`Batch categorizing ${usersWithTweets.length} users (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
+      logger.info(`Batch categorizing ${usersWithTweets.length} users for ${searchConfig.name} (batch ${batchNumber})${attempt > 1 ? ` - Retry ${attempt}/${maxRetries}` : ''}`);
 
       const userPrompt = buildBatchUserPrompt(usersWithTweets);
+
+      // Use PromptBuilder for dynamic batch prompts
+      const systemPrompt = PromptBuilder.buildBatchSystemPrompt(searchConfig);
 
       const stream = await client.chat.send({
         model: config.openRouter.model,
         messages: [
-          { role: 'system', content: BATCH_SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
         stream: true,
@@ -1419,6 +1166,7 @@ async function processBatchWithRetry(
  */
 export async function categorizeUsersBatch(
   inputs: BatchCategorizationInput[],
+  searchConfig: SearchConfiguration,
   maxBatchSize: number = 5,
   maxRetries: number = config.batch.aiRetryCount,
   retryDelay: number = config.batch.aiRetryDelay
@@ -1471,6 +1219,7 @@ export async function categorizeUsersBatch(
     const batchResults = await processBatchWithRetry(
       client,
       usersWithTweets,
+      searchConfig,
       batchNumber,
       maxRetries,
       retryDelay

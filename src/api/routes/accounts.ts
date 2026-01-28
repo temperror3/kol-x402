@@ -6,13 +6,13 @@ import type { Category, AccountFilters } from '../../types/index.js';
 
 const router = Router();
 
-// Query params schema - now uses AI categories
 const listQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
   category: z.enum(['KOL', 'DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED']).optional(),
   minConfidence: z.coerce.number().min(0).max(1).optional(),
   hasGithub: z.coerce.boolean().optional(),
+  configId: z.string().uuid().optional(),
   orderBy: z.enum(['ai_confidence', 'followers_count', 'created_at', 'ai_categorized_at']).default('ai_confidence'),
   orderDir: z.enum(['asc', 'desc']).default('desc'),
 });
@@ -29,6 +29,7 @@ router.get('/', async (req: Request, res: Response) => {
       aiCategory: query.category as Category | undefined,
       minAiConfidence: query.minConfidence,
       hasGithub: query.hasGithub,
+      configId: query.configId,
     };
 
     const result = await AccountModel.list(

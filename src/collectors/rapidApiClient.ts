@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
+import type { SearchConfiguration } from '../types/index.js';
 
 // RapidAPI response types based on the API response structure
 export interface RapidApiUserInfo {
@@ -187,10 +188,12 @@ export function transformRapidApiUser(userInfo: RapidApiUserInfo): {
 
 /**
  * Transform RapidAPI tweet to our internal format
+ * Now accepts SearchConfiguration to use dynamic keywords instead of hardcoded x402
  */
 export function transformRapidApiTweet(
   tweet: RapidApiTweet,
-  accountId: string
+  accountId: string,
+  searchConfig: SearchConfiguration
 ): {
   twitter_id: string;
   account_id: string;
@@ -202,7 +205,7 @@ export function transformRapidApiTweet(
   created_at: string;
   has_code: boolean;
   has_github: boolean;
-  x402_keywords_found: string[];
+  keywords_found: string[]; // Renamed from x402_keywords_found
 } {
   const content = tweet.text;
 
@@ -215,15 +218,17 @@ export function transformRapidApiTweet(
     tweet.entities?.urls?.some((url) => url.expanded_url?.includes('github.com')) ||
     false;
 
-  // Find x402 keywords
-  const x402Keywords: string[] = [];
-  const primaryKeywords = ['x402', '#x402', 'x402 protocol', 'http 402'];
-  const secondaryKeywords = ['402 payment', 'crypto payments api', 'web monetization'];
+  // Find keywords from configuration (dynamic based on search config)
+  const foundKeywords: string[] = [];
+  const allKeywords = [
+    ...searchConfig.primary_keywords,
+    ...searchConfig.secondary_keywords,
+  ];
 
   const lowerContent = content.toLowerCase();
-  [...primaryKeywords, ...secondaryKeywords].forEach((keyword) => {
+  allKeywords.forEach((keyword) => {
     if (lowerContent.includes(keyword.toLowerCase())) {
-      x402Keywords.push(keyword);
+      foundKeywords.push(keyword);
     }
   });
 
@@ -246,7 +251,7 @@ export function transformRapidApiTweet(
     created_at: createdAt,
     has_code: hasCode,
     has_github: hasGithub,
-    x402_keywords_found: x402Keywords,
+    keywords_found: foundKeywords, // Now topic-agnostic
   };
 }
 
@@ -266,24 +271,54 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * Search for a specific user's x402-related tweets
- * Uses query format: "from:{username} x402"
+ * Search for a specific user's topic-related tweets
+ * Uses query format: "from:{username} {keyword}"
+ * Renamed from searchUserX402Tweets to be topic-agnostic
+ */
+export async function searchUserTopicTweets(
+  username: string,
+  searchConfig: SearchConfiguration,
+  maxPages: number = config.search.maxPages,
+  delayMs: number = config.search.delayMs
+): Promise<RapidApiTweet[]> {
+  // Use first primary keyword for Twitter search
+  const primaryKeyword = searchConfig.primary_keywords[0];
+  const query = `from:${username} ${primaryKeyword}`;
+
+  logger.info(`Searching for ${searchConfig.name} tweets from @${username}`);
+
+  const result = await searchTwitterWithPagination(query, maxPages, delayMs);
+
+  logger.info(`Found ${result.tweets.length} ${searchConfig.name} tweets from @${username}`);
+
+  return result.tweets;
+}
+
+/**
+ * @deprecated Use searchUserTopicTweets instead
+ * Legacy function for backwards compatibility
  */
 export async function searchUserX402Tweets(
   username: string,
   maxPages: number = config.search.maxPages,
   delayMs: number = config.search.delayMs
 ): Promise<RapidApiTweet[]> {
-  // Build query to get user's x402 tweets
-  const query = `from:${username} x402`;
-
-  logger.info(`Searching for x402 tweets from @${username}`);
-
-  const result = await searchTwitterWithPagination(query, maxPages, delayMs);
-
-  logger.info(`Found ${result.tweets.length} x402 tweets from @${username}`);
-
-  return result.tweets;
+  // For backwards compatibility, create a temporary x402 config
+  const legacyConfig: SearchConfiguration = {
+    id: 'legacy',
+    name: 'x402',
+    primary_keywords: ['x402'],
+    secondary_keywords: [],
+    topic_context: '',
+    min_followers: 0,
+    min_relevance_score: 0,
+    min_tweet_count_30d: 0,
+    is_active: true,
+    is_default: false,
+    created_at: '',
+    updated_at: '',
+  };
+  return searchUserTopicTweets(username, legacyConfig, maxPages, delayMs);
 }
 
 // Timeline API response types
@@ -375,28 +410,27 @@ class ConcurrencyLimiter {
 }
 
 /**
- * Fetch user data (x402 tweets + timeline) for a single user
- * Internal helper function
+ * Fetch user data (topic tweets + timeline) for a single user.
+ * When searchConfig is provided, uses searchUserTopicTweets; otherwise legacy searchUserX402Tweets.
  */
 async function fetchUserData(
   username: string,
   maxPagesPerUser: number,
   maxTimelineTweets: number,
-  delayMs: number
+  delayMs: number,
+  searchConfig?: SearchConfiguration
 ): Promise<UserTweetData> {
   try {
-    // Fetch x402 tweets
-    const x402Tweets = await searchUserX402Tweets(username, maxPagesPerUser, delayMs);
+    const topicTweets = searchConfig
+      ? await searchUserTopicTweets(username, searchConfig, maxPagesPerUser, delayMs)
+      : await searchUserX402Tweets(username, maxPagesPerUser, delayMs);
 
-    // Add delay between API calls to avoid rate limits
     await delay(delayMs);
-
-    // Fetch general timeline
     const generalTweets = await fetchUserTimeline(username, maxTimelineTweets);
 
     return {
       username,
-      x402Tweets,
+      x402Tweets: topicTweets,
       generalTweets,
     };
   } catch (error) {
@@ -425,6 +459,7 @@ export async function fetchUserDataBatch(
     maxPagesPerUser?: number;
     maxTimelineTweets?: number;
     delayMs?: number;
+    searchConfig?: SearchConfiguration;
     onProgress?: (completed: number, total: number) => void;
   } = {}
 ): Promise<UserTweetData[]> {
@@ -433,11 +468,11 @@ export async function fetchUserDataBatch(
     maxPagesPerUser = config.search.maxPagesPerUser,
     maxTimelineTweets = config.search.maxTimelineTweets,
     delayMs = config.search.delayMs,
+    searchConfig,
     onProgress,
   } = options;
 
   const limiter = new ConcurrencyLimiter(maxConcurrent);
-  const results: UserTweetData[] = [];
   let completed = 0;
 
   logger.info(`Fetching data for ${usernames.length} users (concurrency: ${maxConcurrent})`);
@@ -445,7 +480,7 @@ export async function fetchUserDataBatch(
   const fetchPromises = usernames.map(async (username) => {
     await limiter.acquire();
     try {
-      const result = await fetchUserData(username, maxPagesPerUser, maxTimelineTweets, delayMs);
+      const result = await fetchUserData(username, maxPagesPerUser, maxTimelineTweets, delayMs, searchConfig);
       completed++;
       if (onProgress) {
         onProgress(completed, usernames.length);
@@ -480,6 +515,7 @@ export async function fetchUserDataBatched(
     maxTimelineTweets?: number;
     delayMs?: number;
     delayBetweenBatches?: number;
+    searchConfig?: SearchConfiguration;
     onBatchComplete?: (batchNum: number, totalBatches: number, results: UserTweetData[]) => void;
   } = {}
 ): Promise<UserTweetData[]> {
@@ -490,6 +526,7 @@ export async function fetchUserDataBatched(
     maxTimelineTweets = config.search.maxTimelineTweets,
     delayMs = config.search.delayMs,
     delayBetweenBatches = 5000,
+    searchConfig,
     onBatchComplete,
   } = options;
 
@@ -512,6 +549,7 @@ export async function fetchUserDataBatched(
       maxPagesPerUser,
       maxTimelineTweets,
       delayMs,
+      searchConfig,
     });
 
     allResults.push(...batchResults);

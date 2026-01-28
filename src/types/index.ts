@@ -34,6 +34,35 @@ export interface AICategoryResult {
   reasoning: string;
 }
 
+// Search Configuration (user-defined topics)
+export interface SearchConfiguration {
+  id: string;
+  name: string;
+  description?: string;
+  primary_keywords: string[];
+  secondary_keywords: string[];
+  topic_context: string;
+  min_followers: number;
+  min_relevance_score: number;
+  min_tweet_count_30d: number;
+  is_active: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Account-Configuration relationship (many-to-many)
+export interface AccountConfiguration {
+  id: string;
+  account_id: string;
+  config_id: string;
+  relevance_score: number;
+  tweet_count_30d: number;
+  keywords_found: string[];
+  discovered_at: string;
+  last_analyzed_at?: string;
+}
+
 // Tweet data for analysis
 export interface Tweet {
   id: string;
@@ -47,7 +76,7 @@ export interface Tweet {
   created_at: string;
   has_code: boolean;
   has_github: boolean;
-  x402_keywords_found: string[];
+  keywords_found: string[]; // Renamed from x402_keywords_found
 }
 
 // Twitter API user response
@@ -109,6 +138,8 @@ export interface AccountFilters {
   aiCategory?: Category;
   minAiConfidence?: number;
   hasGithub?: boolean;
+  /** Filter by search configuration: only accounts linked to this config */
+  configId?: string;
 }
 
 // Red flag types for KOL quality assessment

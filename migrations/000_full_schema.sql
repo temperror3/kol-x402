@@ -1,18 +1,10 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { config } from '../config/index.js';
+-- ============================================================================
+-- KOL Finder – full schema (run on empty DB)
+-- Run this in Supabase SQL editor after deleting / creating a new project.
+-- Requires PostgreSQL 11+ (EXECUTE FUNCTION). On PG 10 use EXECUTE PROCEDURE.
+-- ============================================================================
 
-let supabase: SupabaseClient | null = null;
-
-export function getSupabase(): SupabaseClient {
-  if (!supabase) {
-    supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey);
-  }
-  return supabase;
-}
-
-// SQL to create tables in Supabase
-export const SCHEMA_SQL = `
--- Updated at trigger function
+-- Helper: auto-update updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -22,9 +14,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================================================
--- Search Configurations Table (NEW)
+-- 1. Search configurations (no dependencies)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS search_configurations (
+CREATE TABLE search_configurations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
   description TEXT,
@@ -40,21 +32,20 @@ CREATE TABLE IF NOT EXISTS search_configurations (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_search_configs_default
+CREATE UNIQUE INDEX idx_search_configs_default
   ON search_configurations(is_default) WHERE is_default = TRUE;
-CREATE INDEX IF NOT EXISTS idx_search_configs_active ON search_configurations(is_active);
-CREATE INDEX IF NOT EXISTS idx_search_configs_name ON search_configurations(name);
+CREATE INDEX idx_search_configs_active ON search_configurations(is_active);
+CREATE INDEX idx_search_configs_name ON search_configurations(name);
 
-DROP TRIGGER IF EXISTS search_configurations_updated_at ON search_configurations;
 CREATE TRIGGER search_configurations_updated_at
   BEFORE UPDATE ON search_configurations
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================================
--- Accounts table
+-- 2. Accounts (depends on search_configurations for last_analyzed_config_id)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS accounts (
+CREATE TABLE accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   twitter_id TEXT UNIQUE NOT NULL,
   username TEXT NOT NULL,
@@ -65,48 +56,43 @@ CREATE TABLE IF NOT EXISTS accounts (
   tweet_count INTEGER DEFAULT 0,
   profile_image_url TEXT,
 
-  -- Metadata
   has_github BOOLEAN DEFAULT FALSE,
   uses_technical_terms BOOLEAN DEFAULT FALSE,
   posts_code_snippets BOOLEAN DEFAULT FALSE,
 
-  -- AI categorization
-  ai_category TEXT DEFAULT 'UNCATEGORIZED' CHECK (ai_category IN ('KOL', 'DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED')),
+  ai_category TEXT DEFAULT 'UNCATEGORIZED'
+    CHECK (ai_category IN ('KOL', 'DEVELOPER', 'ACTIVE_USER', 'UNCATEGORIZED')),
   ai_reasoning TEXT,
   ai_confidence REAL DEFAULT 0,
   ai_categorized_at TIMESTAMPTZ,
 
-  -- Enhanced quality scores
   topic_consistency_score REAL,
   content_depth_score REAL,
   topic_focus_score REAL,
   red_flags JSONB,
   primary_topics JSONB,
 
-  -- Configuration tracking (NEW)
   last_analyzed_config_id UUID REFERENCES search_configurations(id),
 
-  -- Timestamps
   last_active_at TIMESTAMPTZ,
   last_enriched_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_accounts_ai_category ON accounts(ai_category);
-CREATE INDEX IF NOT EXISTS idx_accounts_ai_confidence ON accounts(ai_confidence DESC);
-CREATE INDEX IF NOT EXISTS idx_accounts_twitter_id ON accounts(twitter_id);
+CREATE INDEX idx_accounts_ai_category ON accounts(ai_category);
+CREATE INDEX idx_accounts_ai_confidence ON accounts(ai_confidence DESC);
+CREATE INDEX idx_accounts_twitter_id ON accounts(twitter_id);
 
-DROP TRIGGER IF EXISTS accounts_updated_at ON accounts;
 CREATE TRIGGER accounts_updated_at
   BEFORE UPDATE ON accounts
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================================
--- Account Configurations (NEW - Many-to-Many Junction Table)
+-- 3. Account–configuration junction (many-to-many)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS account_configurations (
+CREATE TABLE account_configurations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   config_id UUID NOT NULL REFERENCES search_configurations(id) ON DELETE CASCADE,
@@ -118,14 +104,14 @@ CREATE TABLE IF NOT EXISTS account_configurations (
   UNIQUE(account_id, config_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_account_configs_account ON account_configurations(account_id);
-CREATE INDEX IF NOT EXISTS idx_account_configs_config ON account_configurations(config_id);
-CREATE INDEX IF NOT EXISTS idx_account_configs_relevance ON account_configurations(relevance_score DESC);
+CREATE INDEX idx_account_configs_account ON account_configurations(account_id);
+CREATE INDEX idx_account_configs_config ON account_configurations(config_id);
+CREATE INDEX idx_account_configs_relevance ON account_configurations(relevance_score DESC);
 
 -- ============================================================================
--- Tweets table for analysis
+-- 4. Tweets (depends on accounts)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS tweets (
+CREATE TABLE tweets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   twitter_id TEXT UNIQUE NOT NULL,
   account_id UUID REFERENCES accounts(id) ON DELETE CASCADE,
@@ -142,13 +128,13 @@ CREATE TABLE IF NOT EXISTS tweets (
   keywords_found TEXT[] DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_tweets_account_id ON tweets(account_id);
-CREATE INDEX IF NOT EXISTS idx_tweets_created_at ON tweets(created_at DESC);
+CREATE INDEX idx_tweets_account_id ON tweets(account_id);
+CREATE INDEX idx_tweets_created_at ON tweets(created_at DESC);
 
 -- ============================================================================
--- Search queries tracking
+-- 5. Search queries (depends on search_configurations)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS search_queries (
+CREATE TABLE search_queries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   query TEXT NOT NULL,
   results_count INTEGER DEFAULT 0,
@@ -157,5 +143,25 @@ CREATE TABLE IF NOT EXISTS search_queries (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_search_queries_config ON search_queries(config_id);
-`;
+CREATE INDEX idx_search_queries_config ON search_queries(config_id);
+
+-- ============================================================================
+-- 6. Seed one default configuration (optional)
+-- ============================================================================
+INSERT INTO search_configurations (
+  name,
+  description,
+  primary_keywords,
+  secondary_keywords,
+  topic_context,
+  is_default,
+  is_active
+) VALUES (
+  'Default',
+  'Default topic – add keywords and context in Configurations.',
+  ARRAY['KOL', 'thought leader', 'influencer'],
+  ARRAY['analyst', 'commentary'],
+  'Key Opinion Leaders and influential voices. Update this configuration or create new ones in the dashboard.',
+  TRUE,
+  TRUE
+);
