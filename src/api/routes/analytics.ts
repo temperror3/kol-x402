@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { AccountModel } from '../../db/account.model.js';
+import { CampaignAccountModel } from '../../db/campaign.model.js';
 import { logger } from '../../utils/logger.js';
 import type { Category } from '../../types/index.js';
 
@@ -187,11 +188,13 @@ router.get('/outreach', async (req: Request, res: Response) => {
 
 /**
  * GET /api/analytics/confidence-distribution
- * Get AI confidence distribution data for visualization
+ * Get AI confidence distribution data for visualization.
+ * Query param campaignId: when set, distribution is scoped to that campaign only (campaign_accounts).
  */
-router.get('/confidence-distribution', async (_req: Request, res: Response) => {
+router.get('/confidence-distribution', async (req: Request, res: Response) => {
   try {
-    // Calculate confidence distribution
+    const campaignId = req.query.campaignId as string | undefined;
+
     const confidenceBuckets = new Array(10).fill(0);
     const byCategory: Record<string, number[]> = {
       KOL: new Array(10).fill(0),
@@ -200,27 +203,59 @@ router.get('/confidence-distribution', async (_req: Request, res: Response) => {
       UNCATEGORIZED: new Array(10).fill(0),
     };
 
-    // Paginate through all accounts to avoid Supabase's default row limit
-    const pageSize = 1000;
-    let page = 1;
-    let hasMore = true;
+    if (campaignId) {
+      // Campaign-scoped: use campaign_accounts for this campaign only
+      const pageSize = 500;
+      let page = 1;
+      let hasMore = true;
 
-    while (hasMore) {
-      const result = await AccountModel.list({}, page, pageSize, 'ai_confidence', 'desc');
+      while (hasMore) {
+        const result = await CampaignAccountModel.listByCampaign(
+          campaignId,
+          {},
+          page,
+          pageSize,
+          'ai_confidence',
+          'desc'
+        );
 
-      result.data.forEach((account) => {
-        const confidence = account.ai_confidence || 0;
-        const confIdx = Math.min(Math.floor(confidence * 10), 9);
-        confidenceBuckets[confIdx]++;
+        result.data.forEach((item) => {
+          const confidence = item.ai_confidence ?? 0;
+          const confIdx = Math.min(Math.floor(confidence * 10), 9);
+          confidenceBuckets[confIdx]++;
 
-        const category = account.ai_category || 'UNCATEGORIZED';
-        if (category in byCategory) {
-          byCategory[category][confIdx]++;
-        }
-      });
+          const category = item.ai_category || 'UNCATEGORIZED';
+          if (category in byCategory) {
+            byCategory[category][confIdx]++;
+          }
+        });
 
-      hasMore = page < result.pagination.totalPages;
-      page++;
+        hasMore = page < result.pagination.totalPages;
+        page++;
+      }
+    } else {
+      // Global: use accounts table (legacy)
+      const pageSize = 1000;
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const result = await AccountModel.list({}, page, pageSize, 'ai_confidence', 'desc');
+
+        result.data.forEach((account) => {
+          const confidence = account.ai_confidence || 0;
+          const confIdx = Math.min(Math.floor(confidence * 10), 9);
+          confidenceBuckets[confIdx]++;
+
+          const category = account.ai_category || 'UNCATEGORIZED';
+          if (category in byCategory) {
+            byCategory[category][confIdx]++;
+          }
+        });
+
+        hasMore = page < result.pagination.totalPages;
+        page++;
+      }
     }
 
     const bucketLabels = ['0-0.1', '0.1-0.2', '0.2-0.3', '0.3-0.4', '0.4-0.5', '0.5-0.6', '0.6-0.7', '0.7-0.8', '0.8-0.9', '0.9-1.0'];

@@ -44,10 +44,10 @@ export default function Dashboard() {
         setLoading(true);
 
         if (currentCampaign) {
-          // Fetch campaign-specific analytics
+          // Fetch campaign-specific analytics and confidence (scoped to this campaign only)
           const [campaignAnalytics, confidenceData] = await Promise.all([
             getCampaignAnalytics(currentCampaign.id),
-            getConfidenceDistribution(), // This still uses global data for now
+            getConfidenceDistribution(currentCampaign.id),
           ]);
           setSummary(campaignAnalytics);
           setConfidence(confidenceData);

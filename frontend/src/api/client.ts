@@ -63,8 +63,12 @@ export async function getSummary(): Promise<SummaryResponse> {
   return response.data;
 }
 
-export async function getConfidenceDistribution(): Promise<ConfidenceDistribution> {
-  const response = await api.get<ConfidenceDistribution>('/analytics/confidence-distribution');
+export async function getConfidenceDistribution(campaignId?: string): Promise<ConfidenceDistribution> {
+  const params = new URLSearchParams();
+  if (campaignId) params.set('campaignId', campaignId);
+  const response = await api.get<ConfidenceDistribution>(
+    `/analytics/confidence-distribution${params.toString() ? `?${params.toString()}` : ''}`
+  );
   return response.data;
 }
 
